@@ -1,20 +1,13 @@
-# src/main.py
+import time
+from fetch_scores import fetch_afl_scores
+from display import display_scores
 
-from squiggle_api import SquiggleAPI
-
-def main():
-    api = SquiggleAPI()
-
-    # Fetch and display teams
-    teams = api.get_teams()
-    print("Teams:")
-    print(teams)
-
-    # Fetch and display games for a specific year
-    year = 2023
-    games = api.get_games(year=year)
-    print(f"\nGames in {year}:")
-    print(games)
+def run_scoreboard():
+    """Fetch AFL scores and display them continuously"""
+    while True:
+        games = fetch_afl_scores()
+        display_scores(games)
+        time.sleep(10)
 
 if __name__ == "__main__":
-    main()
+    run_scoreboard()
