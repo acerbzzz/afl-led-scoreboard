@@ -7,7 +7,7 @@ options.rows = 32
 options.cols = 64
 options.chain_length = 1
 options.parallel = 1
-options.hardware_mapping = "adafruit-hat"
+options.hardware_mapping = "regular"  # Changed from "adafruit-hat"
 matrix = RGBMatrix(options=options)
 
 white = graphics.Color(255, 255, 255)
@@ -58,3 +58,4 @@ def display_scores(games):
         matrix.SwapOnVSync(offscreen_canvas)
 
     return offscreen_canvas
+
