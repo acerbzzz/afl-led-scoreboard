@@ -42,6 +42,45 @@ class ScoreboardTests(unittest.TestCase):
         mel = datetime(2026, 9, 26, 14, 30, tzinfo=ZoneInfo("Australia/Melbourne"))
         self.assertEqual(afl.iso_date("2026-09-26 14:30:00"), mel.astimezone(timezone.utc))
 
+    def test_all_18_club_logos_required(self):
+        self.assertEqual(afl.verify_all_logos(), 18)
+        for _, full, _ in afl.TEAMS.values():
+            crest = afl.logo_image(full, 96)
+            self.assertEqual(crest.mode, "RGBA")
+            self.assertEqual(crest.size, (96, 96))
+
+    def test_missing_or_broken_logo_refuses_to_render(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(afl, "ROOT", Path(temp)):
+                with self.assertRaises(afl.MissingLogoError):
+                    afl.draw_game(self.game)
+                with self.assertRaises(afl.MissingLogoError):
+                    afl.draw_game_hd(self.game)
+                with self.assertRaises(afl.MissingLogoError):
+                    afl.verify_all_logos()
+                logos = Path(temp) / "logos"
+                logos.mkdir()
+                (logos / "Fremantle.bmp").write_bytes(b"not a real image")
+                with self.assertRaises(afl.MissingLogoError):
+                    afl.logo_image("Fremantle", 32)
+
+    def test_hd_uses_real_logos_not_team_initials(self):
+        sentinel = (245, 0, 230)
+        with patch.object(afl, "logo_image", side_effect=lambda full, size: afl.Image.new("RGBA", (size, size), sentinel + (255,))):
+            frame = afl.draw_game_hd(self.game)
+        self.assertEqual(frame.getpixel((139, 169 + 86)), sentinel)
+        self.assertEqual(frame.getpixel((139, 366 + 86)), sentinel)
+
+    def test_all_club_name_variants_resolve_to_logo(self):
+        for name, expected in (("Brisbane Lions", "Brisbane"),
+                               ("Sydney Swans", "Sydney"),
+                               ("Adelaide Crows", "Adelaide"),
+                               ("West Coast Eagles", "West Coast"),
+                               ("Port Adelaide Power", "Port Adelaide")):
+            self.assertEqual(afl.resolve_team(name)[1], expected)
+        with self.assertRaises(afl.MissingLogoError):
+            afl.draw_game_hd({"hteam": "Unknown Team", "ateam": "Fremantle"})
+
     def test_live_and_final(self):
         self.assertTrue(afl.is_live(self.game))
         self.game["complete"] = 100

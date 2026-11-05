@@ -54,10 +54,19 @@ TEAM_ALIASES = {
     "greaterwesternsydney": 9,
     "gwsgiants": 9,
     "northmelbournekangaroos": 12,
-    "portadelaidepower": 14,
+    "portadelaidepower": 13,
     "stkildasaints": 15,
     "st.kilda": 15,
     "westcoasteagles": 17,
+    "adelaidecrows": 1,
+    "carltonblues": 3,
+    "collingwoodmagpies": 4,
+    "essendonbombers": 5,
+    "hawthornhawks": 10,
+    "melbournedemons": 11,
+    "richmondtigers": 14,
+    "sydneyswans": 16,
+    "westernbulldogs": 18,
 }
 
 
@@ -250,17 +259,41 @@ def team_data(game: dict, side: str) -> tuple[str, str, str]:
     return resolve_team(game.get(side))
 
 
-def logo_image(full: str, size: int = 9):
+class MissingLogoError(RuntimeError):
+    """A required AFL club logo is missing, unreadable, or unidentified."""
+
+
+def logo_image(full: str, size: int = 9) -> Image.Image:
+    """Load a real club image. There is deliberately no initials/colour fallback."""
+    if size < 1:
+        raise ValueError("Logo size must be positive")
     if not full:
-        return None
+        raise MissingLogoError("Club has no recognised logo mapping; check the Squiggle team name")
     path = ROOT / "logos" / f"{full}.bmp"
-    if not path.exists():
-        return None
+    if not path.is_file():
+        raise MissingLogoError(f"Required AFL club logo missing: {path}")
     try:
-        with Image.open(path) as original:
-            return original.convert("RGB").resize((size, size), Image.Resampling.LANCZOS)
-    except (OSError, ValueError):
-        return None
+        with Image.open(path) as source:
+            source.load()
+            if source.width < 16 or source.height < 16:
+                raise ValueError("logo image is smaller than 16x16")
+            image = source.convert("RGBA")
+            return image.resize((size, size), Image.Resampling.LANCZOS)
+    except (OSError, ValueError) as exc:
+        raise MissingLogoError(f"Required AFL club logo unreadable: {path} ({exc})") from exc
+
+
+def verify_all_logos() -> int:
+    """Fail early if ANY of the 18 club assets is absent or unreadable."""
+    errors = []
+    for _, full, _ in TEAMS.values():
+        try:
+            logo_image(full, 32)
+        except MissingLogoError as exc:
+            errors.append(str(exc))
+    if errors:
+        raise MissingLogoError("AFL logos are mandatory; fix these assets:\n" + "\n".join(errors))
+    return len(TEAMS)
 
 
 PIXELS = {
@@ -333,10 +366,7 @@ def draw_game(game: dict | None, width: int = 64, height: int = 32) -> Image.Ima
     for y, prefix, side in ((11, "h", "hteam"), (22, "a", "ateam")):
         short, full, color = team_data(game, side)
         logo = logo_image(full, 9)
-        if logo is not None:
-            image.paste(logo, (1, y))
-        else:
-            draw.rectangle((1, y + 1, 8, y + 8), fill=color)
+        image.paste(logo, (1, y), logo)
         pixels(draw, (12, y + 2), short[:3], color)
         gb, total = format_scoring(game, prefix)
         pixels(draw, (28, y + 2), gb[:5], "#DDDDDD")
@@ -423,7 +453,9 @@ def draw_game_hd(game: dict | None) -> Image.Image:
                                fill="#142135", outline="#30415a", width=2)
         draw.rounded_rectangle((57, y + 2, 64, y + 173), radius=3, fill=color)
         draw.ellipse((86, y + 33, 192, y + 139), fill="#0b1423", outline=color, width=5)
-        _center_text(draw, (139, y + 87), short[:3], _font(29, True), "#ffffff")
+        # Show the real club crest on the HD display, not the former initials badge.
+        crest = logo_image(full, 96)
+        canvas.paste(crest, (91, y + 38), crest)
         raw_name = game.get(side)
         display_name = (str(raw_name) if raw_name and not str(raw_name).isdigit() else full or short)
         display_name = display_name.replace("Stkilda", "St Kilda")
@@ -593,6 +625,10 @@ def main(argv=None) -> int:
         parser.error("Rotation settings must be 2..3600 seconds and 1..30 games")
     if args.hardware_test and args.driver != "matrix":
         parser.error("--hardware-test requires --driver matrix on a Raspberry Pi")
+    try:
+        verified_count = verify_all_logos()
+    except MissingLogoError as exc:
+        parser.error(str(exc))
     matrix = make_matrix(args) if args.driver == "matrix" else None
     if args.hardware_test:
         run_hardware_test(matrix)

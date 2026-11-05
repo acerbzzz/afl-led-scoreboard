@@ -1,10 +1,11 @@
 # AFL LED Scoreboard 🏉
 
-An original Australian-rules scoreboard for a **64×32 HUB75 RGB LED matrix** on a Raspberry Pi, inspired by [mikemountain/nfl-led-scoreboard](https://github.com/mikemountain/nfl-led-scoreboard). Displays club colours, optional existing team BMP logos, goals.behinds (**total points**), quarter/time from Squiggle, and pre-game / final states. Uses the free [Squiggle AFL API](https://api.squiggle.com.au/).
+An original Australian-rules scoreboard for a **64×32 HUB75 RGB LED matrix** on a Raspberry Pi, inspired by [mikemountain/nfl-led-scoreboard](https://github.com/mikemountain/nfl-led-scoreboard). Displays club colours, mandatory real club logos for all 18 teams, goals.behinds (**total points**), quarter/time from Squiggle, and pre-game / final states. Uses the free [Squiggle AFL API](https://api.squiggle.com.au/).
 
 ## Features
 
 - 64×32 LED output using [`rpi-rgb-led-matrix`](https://github.com/hzeller/rpi-rgb-led-matrix), plus a **640×320 PNG preview** that works without a Pi.
+- **Logos are required, not optional**: all 18 included club images are validated on startup, both teams use their real crests on the HD desktop preview and physical LED panel. Missing/unreadable assets cause a clear error instead of initials or coloured squares. The supplied artwork is low-resolution (32×32) and cannot become true HD detail just by enlarging it.
 - All 18 AFL clubs, optional team filter (`--favorite FRE`), Australian Eastern kickoff times, score in `12.8  80` format.
 - One-shot fixture lookup via Squiggle REST, **cached 30 minutes**, and a long-lived SSE stream for live updates (no aggressive REST polling).
 - **Automatic match rotation**: cycle through up to six relevant games every 15 seconds without extra REST requests; one SSE connection covers active matches.
@@ -87,3 +88,9 @@ Squiggle is free, but it asks users to identify their bot via an email-bearing U
 ## Credits & licensing
 
 Inspired by the LED scoreboard concept of [mikemountain/nfl-led-scoreboard](https://github.com/mikemountain/nfl-led-scoreboard) (GPL-3.0); rewritten for AFL rather than copying the NFL application. Existing `logos/*.bmp` were carried forward from this project's earlier repository state. Their rights may differ; verify before redistribution.
+
+## Required club logos
+
+The `logos/` directory must contain all **18** checked-in club images with the exact filenames shown in `TEAMS` (for example `logos/Fremantle.bmp` and `logos/Brisbane.bmp`). These legacy files have `.bmp` filenames but contain images readable by Pillow. Keep the whole folder when copying to your Raspberry Pi.
+
+At startup, `verify_all_logos()` loads and validates every image. If even one is missing or corrupt, the application stops with an actionable message. An unrecognised Squiggle team name also stops that render instead of showing fake initials. This ensures no logo-free scoreboard. The 64×32 physical panel inherently limits fine crest details; the default HD preview shows larger full club logos but image quality is limited by the source assets.
