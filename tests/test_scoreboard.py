@@ -161,6 +161,21 @@ class ScoreboardTests(unittest.TestCase):
                     self.assertEqual(query.call_count, 1)
             self.assertTrue(target.is_file())
 
+    def test_native_matrix_uses_larger_mandatory_logos(self):
+        """Both 12px crests must fit within a 64x32 panel without overlap."""
+        sentinels = {"Fremantle": (240, 0, 190, 255),
+                     "West Coast": (250, 200, 0, 255)}
+        calls = []
+        def logo(full, size):
+            calls.append((full, size))
+            return afl.Image.new("RGBA", (size, size), sentinels[full])
+        with patch.object(afl, "logo_image", side_effect=logo):
+            panel = afl.draw_game(self.game)
+        self.assertEqual(panel.size, (64, 32))
+        self.assertEqual(calls, [("Fremantle", 12), ("West Coast", 12)])
+        self.assertEqual(panel.getpixel((3, 11)), sentinels["Fremantle"][:3])
+        self.assertEqual(panel.getpixel((3, 24)), sentinels["West Coast"][:3])
+
     def test_preview_is_64x32(self):
         frame = afl.draw_game(self.game)
         self.assertEqual(frame.size, (64, 32))

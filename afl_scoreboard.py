@@ -272,10 +272,10 @@ def logo_image(full: str, size: int = 9) -> Image.Image:
     legacy = ROOT / "logos" / f"{full}.bmp"
     if not legacy.is_file():
         raise MissingLogoError(f"Required AFL club logo missing: {legacy}")
-    # Desktop previews prefer optional separately downloaded high-resolution PNGs.
-    # Physical 64x32 matrix keeps using the small built-in crests.
+    # Prefer transparent high-resolution artwork on BOTH displays, including
+    # native LED output. Keep the bundled real club crest for offline use.
     hd = ROOT / "logos_hd" / f"{full}.png"
-    path = hd if size >= 64 and hd.is_file() else legacy
+    path = hd if hd.is_file() else legacy
     try:
         with Image.open(path) as source:
             source.load()
@@ -370,20 +370,24 @@ def draw_game(game: dict | None, width: int = 64, height: int = 32) -> Image.Ima
     if game is None:
         pixels(draw, (4, 13), "NO AFL GAMES", "white")
         return image
-    pixels(draw, (1, 2), f"R{game.get('round', '?')}"[:4], "#58D4FF")
+    # Native 64x32 composition: 5px header, 1px divider, two 12px crests.
+    # Bigger logos are the first priority; all scoring fits without clipping.
+    pixels(draw, (0, 0), f"R{game.get('round', '?')}"[:4], "#58D4FF")
     demo = bool(game.get("_demo"))
     status_color = "#30DAF5" if demo else ("#37E881" if is_live(game) else ("#FF6B75" if status_text(game) == "FINAL" else "#FFD34D"))
-    pixels(draw, (18, 2), "DEMO" if demo else status_text(game)[:11], status_color)
-    draw.line((0, 9, 63, 9), fill="#303030")
-    for y, prefix, side in ((11, "h", "hteam"), (22, "a", "ateam")):
+    pixels(draw, (18, 0), "DEMO" if demo else status_text(game)[:11], status_color)
+    draw.line((0, 6, 63, 6), fill="#303030")
+    draw.line((12, 19, 63, 19), fill="#202732")
+    for y, prefix, side in ((7, "h", "hteam"), (20, "a", "ateam")):
         short, full, color = team_data(game, side)
-        logo = logo_image(full, 9)
-        image.paste(logo, (1, y), logo)
-        pixels(draw, (12, y + 2), short[:3], color)
+        logo = logo_image(full, 12)
+        image.paste(logo, (0, y), logo)
+        pixels(draw, (13, y + 3), short[:3], color)
         gb, total = format_scoring(game, prefix)
-        pixels(draw, (28, y + 2), gb[:5], "#DDDDDD")
-        # Pin total to the right edge while preventing overlap with goals.behinds.
-        pixels(draw, (64 - 4 * min(len(total), 3), y + 2), total[:3], "#FFFFFF")
+        pixels(draw, (27, y + 3), gb[:5], "#DDDDDD")
+        # Right-align up to three digits of points at the matrix's outer edge.
+        rendered_total = total[:3]
+        pixels(draw, (64 - 4 * len(rendered_total), y + 3), rendered_total, "#FFFFFF")
     return image
 
 

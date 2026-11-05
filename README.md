@@ -5,7 +5,8 @@ An original Australian-rules scoreboard for a **64×32 HUB75 RGB LED matrix** on
 ## Features
 
 - 64×32 LED output using [`rpi-rgb-led-matrix`](https://github.com/hzeller/rpi-rgb-led-matrix), plus a **crisp 1280×640 desktop preview** by default or 640×320 pixel-accurate LED simulation (`--preview-style pixel`).
-- **Logos are mandatory**: all 18 bundled team crests are validated at startup (no initials or colour-square fallbacks). Download 500px transparent replacements once for a much sharper desktop preview; the original icons remain for the 64×32 LED panel.
+- **LED-first pixel layout**: native 64×32 panel uses 12×12 club logos (up from 9×9) with compact scoreboard rows. Downloaded transparent HD crests are preferred when present and downsampled for physical LEDs; if absent, bundled club crests are still required. This differs intentionally from the roomy desktop layout.
+- **Logos are mandatory**: all 18 bundled team crests are validated at startup (no initials or colour-square fallbacks). Download 500px transparent replacements once for a much sharper desktop preview; the bundled club logos remain available when HD images have not been copied to the Raspberry Pi.
 - All 18 AFL clubs, optional team filter (`--favorite FRE`), Australian Eastern kickoff times, score in `12.8  80` format.
 - One-shot fixture lookup via Squiggle REST, **cached 30 minutes**, and a long-lived SSE stream for live updates (no aggressive REST polling).
 - **Automatic match rotation**: cycle through up to six relevant games every 15 seconds without extra REST requests; one SSE connection covers active matches.

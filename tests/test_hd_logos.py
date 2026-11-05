@@ -68,8 +68,9 @@ class HdLogoTests(unittest.TestCase):
                 self.assertEqual(crest.size, (116, 116))
                 self.assertEqual(crest.getpixel((0, 0))[3], 0)
                 self.assertEqual(crest.getpixel((58, 58))[:3], (150, 50, 190))
-                led = afl.logo_image("Fremantle", 9)
-                self.assertEqual(led.getpixel((4, 4))[:3], (255, 255, 0))
+                led = afl.logo_image("Fremantle", 12)
+                rgb = led.getpixel((6, 6))[:3]
+                self.assertTrue(all(abs(actual - expected) <= 2 for actual, expected in zip(rgb, (150, 50, 190))))
 
     def test_demo_markers_and_real_scores_not_mislabeled(self):
         demo = afl.demo_game()
