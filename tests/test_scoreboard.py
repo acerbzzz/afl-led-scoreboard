@@ -46,7 +46,7 @@ class ScoreboardTests(unittest.TestCase):
         self.assertTrue(afl.is_live(self.game))
         self.game["complete"] = 100
         self.assertFalse(afl.is_live(self.game))
-        self.assertEqual(afl.status_text(self.game), "FULL TIME")
+        self.assertEqual(afl.status_text(self.game), "FINAL")
 
     def test_game_priority_and_favorite(self):
         past = dict(self.game, id=1, complete=100, date="2026-05-01T05:00:00Z")
@@ -55,6 +55,72 @@ class ScoreboardTests(unittest.TestCase):
         now = datetime(2026, 6, 1, tzinfo=timezone.utc)
         self.assertEqual([g["id"] for g in afl.select_games([past, up, live], now=now)], [3, 2, 1])
         self.assertEqual([g["id"] for g in afl.select_games([past, up, live], favorite="FRE", now=now)], [3, 1])
+
+    def test_compact_match_headers(self):
+        self.assertEqual(afl.status_text(dict(self.game, complete=100)), "FINAL")
+        self.assertEqual(afl.status_text(dict(self.game, timestr="Q4 12:37")), "Q4 12:37")
+        self.assertEqual(afl.status_text(dict(self.game, timestr="Half Time")), "HALF TIME")
+        self.assertEqual(afl.status_text(dict(self.game, timestr="3/4 Time")), "Q3 END")
+        self.assertEqual(afl.status_text(dict(self.game, timestr="unknown")), "LIVE")
+        scheduled = dict(self.game, complete=0, date="2026-09-26 14:30:00")
+        self.assertEqual(afl.status_text(scheduled), "26SEP 14:30")
+        self.assertLessEqual(len(afl.status_text(scheduled)), 11)
+
+    def test_diagnostic_frames_preview_and_mock_matrix(self):
+        frames = list(afl.diagnostic_frames())
+        self.assertEqual(len(frames), 4)
+        self.assertTrue(all(frame.size == (64, 32) for frame in frames))
+        class FakeCanvas:
+            def __init__(self): self.images = []
+            def SetImage(self, frame): self.images.append(frame)
+        class FakeMatrix:
+            def __init__(self): self.canvases = []; self.swaps = 0
+            def CreateFrameCanvas(self):
+                canvas = FakeCanvas(); self.canvases.append(canvas); return canvas
+            def SwapOnVSync(self, canvas): self.swaps += 1; return canvas
+        matrix = FakeMatrix()
+        with patch.object(afl.time, "sleep"):
+            afl.run_hardware_test(matrix)
+        self.assertEqual(matrix.swaps, 4)
+        self.assertEqual(sum(len(c.images) for c in matrix.canvases), 4)
+        self.assertNotEqual(frames[0].getpixel((0, 0)), frames[1].getpixel((0, 0)))
+
+    def test_matrix_hardware_test_no_api(self):
+        with patch.object(afl, "make_matrix", return_value=object()) as make:
+            with patch.object(afl, "run_hardware_test") as test:
+                self.assertEqual(afl.main(["--driver", "matrix", "--hardware-test"]), 0)
+                self.assertEqual(make.call_count, 1)
+                self.assertEqual(test.call_count, 1)
+
+    def test_rotation_cycles_and_respects_favorite(self):
+        first = dict(self.game, id=1, complete=100, date="2026-09-01T03:00:00Z")
+        second = dict(self.game, id=2, complete=100, date="2026-09-02T03:00:00Z")
+        third = dict(self.game, id=3, complete=100, date="2026-09-03T03:00:00Z", hteam=1, ateam=2)
+        games = [first, second, third]
+        self.assertEqual([afl.rotation_choice(games, i)["id"] for i in range(5)], [3, 2, 1, 3, 2])
+        self.assertEqual([afl.rotation_choice(games, i, "FRE")["id"] for i in range(3)], [2, 1, 2])
+        self.assertEqual([afl.rotation_choice(games, i, limit=2)["id"] for i in range(3)], [3, 2, 3])
+        self.assertIsNone(afl.rotation_choice([], 0))
+        with self.assertRaises(ValueError):
+            afl.rotation_pool(games, limit=0)
+
+    def test_event_stream_only_when_games_are_relevant(self):
+        now = datetime(2026, 9, 1, 5, tzinfo=timezone.utc)
+        future = dict(self.game, complete=0, date="2026-09-01T05:30:00Z")
+        distant = dict(self.game, complete=0, date="2026-09-12T05:30:00Z")
+        finished = dict(self.game, complete=100)
+        self.assertTrue(afl.should_watch_events([future], now))
+        self.assertTrue(afl.should_watch_events([dict(self.game, complete=33)], now))
+        self.assertFalse(afl.should_watch_events([distant, finished], now))
+
+    def test_rotation_once_uses_one_rest_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "preview.png"
+            with patch.dict("os.environ", {"SQUIGGLE_CONTACT_EMAIL": "tester@example.org"}):
+                with patch.object(afl, "season_games", return_value=[self.game]) as query:
+                    self.assertEqual(afl.main(["--once", "--year", "2026", "--preview", str(target), "--rotate-limit", "4"]), 0)
+                    self.assertEqual(query.call_count, 1)
+            self.assertTrue(target.is_file())
 
     def test_preview_is_64x32(self):
         frame = afl.draw_game(self.game)
@@ -69,7 +135,34 @@ class ScoreboardTests(unittest.TestCase):
             target = Path(temp) / "afl.png"
             self.assertEqual(afl.main(["--demo", "--preview", str(target)]), 0)
             with afl.Image.open(target) as image:
+                self.assertEqual(image.size, (1280, 640))
+
+    def test_crisp_hd_and_legacy_pixel_preview(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sharp = Path(temp) / "hd.png"
+            blocky = Path(temp) / "pixel.png"
+            self.assertEqual(afl.main(["--demo", "--preview", str(sharp)]), 0)
+            self.assertEqual(afl.main(["--demo", "--preview-style", "pixel",
+                                       "--preview", str(blocky)]), 0)
+            with afl.Image.open(sharp) as image:
+                self.assertEqual(image.size, (1280, 640))
+                self.assertIsNotNone(image.getbbox())
+            with afl.Image.open(blocky) as image:
                 self.assertEqual(image.size, (640, 320))
+
+    def test_hd_renders_squiggle_names_and_unknown_scores(self):
+        game = dict(self.game, hteam="Fremantle", ateam="Brisbane Lions",
+                    complete=100, hgoals=12, hbehinds=17, hscore=89,
+                    agoals=14, abehinds=12, ascore=96)
+        self.assertEqual(afl.draw_game_hd(game).size, (1280, 640))
+        self.assertEqual(afl.draw_game_hd(None).size, (1280, 640))
+        game.update(complete=0, hgoals=None, hbehinds=None, hscore=None)
+        self.assertEqual(afl.draw_game_hd(game).size, (1280, 640))
+
+    def test_quarter_live_and_final_labels(self):
+        self.assertEqual(afl.status_text(dict(self.game, complete=100)), "FINAL")
+        self.assertEqual(afl.status_text(dict(self.game, complete=65, timestr="Q3 14:26")), "Q3 14:26")
+        self.assertIn("MAY", afl.status_text(dict(self.game, complete=0)))
 
     def test_headers_reject_missing_contact(self):
         with self.assertRaises(ValueError):

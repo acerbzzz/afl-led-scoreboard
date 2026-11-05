@@ -9,19 +9,20 @@ import json
 import os
 import re
 import sys
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 API = "https://api.squiggle.com.au/"
 EVENTS = "https://sse.squiggle.com.au/events"
 ROOT = Path(__file__).resolve().parent
-CACHE = ROOT / ".cache"
+CACHE = Path(os.environ.get("AFL_SCOREBOARD_CACHE_DIR", str(ROOT / ".cache")))
 SCORE_KEYS = ("hscore", "ascore", "hgoals", "agoals", "hbehinds", "abehinds")
 TEAMS = {
     1: ("ADE", "Adelaide", "#E31B23"),
@@ -159,6 +160,55 @@ def select_games(games: list[dict], favorite: str | None = None, now: datetime |
     return live + future + finished
 
 
+
+def rotation_pool(games: list[dict], favorite: str | None = None, limit: int = 6, now: datetime | None = None) -> list[dict]:
+    """Choose the most relevant games once per display step; no network calls."""
+    if limit < 1:
+        raise ValueError("rotation limit must be at least 1")
+    return select_games(games, favorite, now)[:limit]
+
+
+def rotation_choice(games: list[dict], index: int, favorite: str | None = None,
+                    limit: int = 6, now: datetime | None = None) -> dict | None:
+    pool = rotation_pool(games, favorite, limit, now)
+    return pool[index % len(pool)] if pool else None
+
+
+def should_watch_events(games: list[dict], now: datetime | None = None) -> bool:
+    """Hold one SSE connection when games are active or due to start soon."""
+    now = now or datetime.now(timezone.utc)
+    for game in games:
+        if is_live(game):
+            return True
+        if (as_int(game.get("complete")) or 0) == 0:
+            start = iso_date(game.get("date"))
+            if now - timedelta(hours=2) <= start <= now + timedelta(hours=1):
+                return True
+    return False
+
+
+def follow_events(state: dict[int, dict], lock: threading.Lock,
+                  stop: threading.Event, headers: dict[str, str]) -> None:
+    """Follow all live games on one long-lived stream, independently of display rotation."""
+    event_headers = dict(headers, Accept="text/event-stream", **{"Cache-Control": "no-cache"})
+    while not stop.is_set():
+        with lock:
+            watch = should_watch_events(list(state.values()))
+        if not watch:
+            stop.wait(30)
+            continue
+        try:
+            with urlopen(Request(EVENTS, headers=event_headers), timeout=90) as stream:
+                for event_type, payload in event_messages(stream):
+                    if stop.is_set():
+                        return
+                    with lock:
+                        apply_event(state, event_type, payload)
+        except (OSError, HTTPError, URLError, TimeoutError, ValueError) as exc:
+            print(f"SSE connection interrupted: {exc}; reconnecting", file=sys.stderr)
+        stop.wait(10)  # A closed stream must not result in a tight reconnect loop.
+
+
 def as_int(value):
     try:
         return int(value) if value is not None else None
@@ -176,16 +226,24 @@ def format_scoring(game: dict, prefix: str) -> tuple[str, str]:
 
 
 def status_text(game: dict) -> str:
-    if int(game.get("complete") or 0) >= 100:
-        return "FULL TIME"
+    """Short, readable text that fits inside a 64-pixel-wide matrix header."""
+    raw = str(game.get("timestr") or "").strip().upper()
+    if (as_int(game.get("complete")) or 0) >= 100 or raw == "FULL TIME":
+        return "FINAL"
     if is_live(game):
-        return str(game.get("timestr") or "LIVE")[:18].upper()
+        if "3/4 TIME" in raw or "THREE QUARTER" in raw:
+            return "Q3 END"
+        if "HALF TIME" in raw or "1/2 TIME" in raw:
+            return "HALF TIME"
+        if "1/4 TIME" in raw or "QUARTER TIME" in raw:
+            return "Q1 END"
+        match = re.search(r"\bQ[1-4]\b", raw)
+        return raw[match.start():][:11] if match else "LIVE"
     when = iso_date(game.get("date"))
     if when.year <= 1:
         return "UPCOMING"
-    # Always show Australian Eastern football time, respecting DST.
     mel = when.astimezone(ZoneInfo("Australia/Melbourne"))
-    return mel.strftime("%d %b %I:%M%p")
+    return mel.strftime("%d%b %H:%M").upper()  # e.g. 26SEP 14:30, 11 chars
 
 
 def team_data(game: dict, side: str) -> tuple[str, str, str]:
@@ -269,7 +327,8 @@ def draw_game(game: dict | None, width: int = 64, height: int = 32) -> Image.Ima
         pixels(draw, (4, 13), "NO AFL GAMES", "white")
         return image
     pixels(draw, (1, 2), f"R{game.get('round', '?')}"[:4], "#58D4FF")
-    pixels(draw, (18, 2), status_text(game)[:11], "#FFD34D")
+    status_color = "#37E881" if is_live(game) else ("#FF6B75" if status_text(game) == "FINAL" else "#FFD34D")
+    pixels(draw, (18, 2), status_text(game)[:11], status_color)
     draw.line((0, 9, 63, 9), fill="#303030")
     for y, prefix, side in ((11, "h", "hteam"), (22, "a", "ateam")):
         short, full, color = team_data(game, side)
@@ -285,6 +344,107 @@ def draw_game(game: dict | None, width: int = 64, height: int = 32) -> Image.Ima
         pixels(draw, (64 - 4 * min(len(total), 3), y + 2), total[:3], "#FFFFFF")
     return image
 
+
+
+HD_WIDTH, HD_HEIGHT = 1280, 640
+
+
+def _font(size: int, bold: bool = False):
+    """Pillow bundles DejaVu fonts on most platforms, with a safe fallback."""
+    name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+    try:
+        return ImageFont.truetype(name, size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _center_text(draw: ImageDraw.ImageDraw, middle: tuple[int, int], text: str,
+                 font, fill: str) -> None:
+    left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+    draw.text((middle[0] - (right - left) / 2 - left,
+               middle[1] - (bottom - top) / 2 - top), text, font=font, fill=fill)
+
+
+def _bounded_text(draw: ImageDraw.ImageDraw, text: str, max_width: int,
+                  preferred_size: int, minimum_size: int = 20, bold: bool = False):
+    """Size text to fit a given area rather than silently clipping the team name."""
+    for size in range(preferred_size, minimum_size - 1, -2):
+        font = _font(size, bold)
+        if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+            return font
+    return _font(minimum_size, bold)
+
+
+def draw_game_hd(game: dict | None) -> Image.Image:
+    """High-resolution desktop-only scoreboard; never upscale the tiny LED raster."""
+    canvas = Image.new("RGB", (HD_WIDTH, HD_HEIGHT), "#07111d")
+    draw = ImageDraw.Draw(canvas)
+    for y in range(HD_HEIGHT):
+        offset = int(11 * y / HD_HEIGHT)
+        draw.line((0, y, HD_WIDTH, y), fill=(7 + offset, 17 + offset, 29 + offset))
+
+    draw.rounded_rectangle((24, 24, 1256, 616), radius=30,
+                           fill="#0b1525", outline="#2b3d52", width=2)
+    draw.rectangle((28, 26, 1252, 32), fill="#12bdc7")
+    draw.text((65, 60), "AFL  /  LIVE SCOREBOARD", font=_font(38, True), fill="#ffffff")
+
+    if game is None:
+        _center_text(draw, (640, 342), "NO AFL GAMES AVAILABLE", _font(48, True), "#b8c6d9")
+        return canvas
+
+    round_no = game.get("round")
+    is_grand_final = bool(as_int(game.get("is_grand_final")))
+    is_final = bool(as_int(game.get("is_final")))
+    round_name = ("GRAND FINAL" if is_grand_final else "FINALS" if is_final
+                  else (f"ROUND {round_no}" if round_no is not None else "AFL"))
+    date_value = iso_date(game.get("date"))
+    if date_value.year > 1:
+        date_text = date_value.astimezone(ZoneInfo("Australia/Melbourne")).strftime("%d %b %Y  •  %I:%M %p AET")
+        date_text = date_text.replace(" 0", " ")
+    else:
+        date_text = "TIME TO BE CONFIRMED"
+    draw.text((66, 113), f"{round_name}    {date_text}", font=_font(24), fill="#9eb0c5")
+
+    complete = as_int(game.get("complete")) or 0
+    if complete >= 100:
+        state_label, detail, state_color = "FULL TIME", "FINAL RESULT", "#44d9ab"
+    elif is_live(game):
+        state_label, detail, state_color = "LIVE", status_text(game), "#fb686e"
+    else:
+        state_label, detail, state_color = "UPCOMING", "MATCH PREVIEW", "#f5c85d"
+    draw.rounded_rectangle((1010, 61, 1208, 115), radius=22,
+                           fill="#1b283a", outline=state_color, width=2)
+    _center_text(draw, (1109, 87), state_label, _font(25, True), state_color)
+    draw.text((1017, 120), detail[:19], font=_font(16), fill="#9eb0c5")
+
+    for y, side, prefix in ((169, "hteam", "h"), (366, "ateam", "a")):
+        short, full, color = team_data(game, side)
+        draw.rounded_rectangle((55, y, 1225, y + 175), radius=22,
+                               fill="#142135", outline="#30415a", width=2)
+        draw.rounded_rectangle((57, y + 2, 64, y + 173), radius=3, fill=color)
+        draw.ellipse((86, y + 33, 192, y + 139), fill="#0b1423", outline=color, width=5)
+        _center_text(draw, (139, y + 87), short[:3], _font(29, True), "#ffffff")
+        raw_name = game.get(side)
+        display_name = (str(raw_name) if raw_name and not str(raw_name).isdigit() else full or short)
+        display_name = display_name.replace("Stkilda", "St Kilda")
+        draw.text((226, y + 37), display_name,
+                  font=_bounded_text(draw, display_name, 475, 39, 24, bold=True), fill="#f0f5fa")
+        draw.text((228, y + 102), "HOME" if side == "hteam" else "AWAY",
+                  font=_font(18, True), fill="#8398b4")
+        gb, total = format_scoring(game, prefix)
+        score_font = _bounded_text(draw, gb, 225, 52, 30, bold=True)
+        right_gb = 985
+        gb_width = draw.textbbox((0, 0), gb, font=score_font)[2]
+        draw.text((right_gb - gb_width, y + 55), gb, font=score_font, fill="#c3d1e2")
+        draw.line((1015, y + 44, 1015, y + 136), fill="#34435a", width=2)
+        total_font = _bounded_text(draw, total, 160, 91, 48, bold=True)
+        b = draw.textbbox((0, 0), total, font=total_font)
+        draw.text((1158 - (b[2] - b[0]), y + 32), total,
+                  font=total_font, fill="#ffffff")
+
+    draw.text((66, 576), "6 POINTS = GOAL    •    1 POINT = BEHIND", font=_font(19), fill="#839ab3")
+    draw.text((1055, 576), "SQUIGGLE DATA", font=_font(17, True), fill="#7189a3")
+    return canvas
 
 def apply_event(state: dict[int, dict], event_type: str, payload: dict) -> bool:
     """Merge documented Squiggle SSE event shapes; ignore unknown games/events."""
@@ -340,18 +500,25 @@ def event_messages(response):
             pass
 
 
-def show(frame: Image.Image, mode: str, preview_path: Path, matrix=None) -> None:
+def show(frame: Image.Image, mode: str, preview_path: Path, matrix=None,
+         game: dict | None = None, preview_style: str = "hd") -> None:
     if mode == "matrix":
         if matrix is None:
             raise RuntimeError("matrix driver unavailable")
         canvas = matrix.CreateFrameCanvas()
-        canvas.SetImage(frame)
+        canvas.SetImage(frame.convert("RGB"))
         matrix.SwapOnVSync(canvas)
     else:
         preview_path.parent.mkdir(parents=True, exist_ok=True)
-        # Nearest-neighbour preserves crisp LEDs for a browser/desktop preview.
-        frame.resize((640, 320), Image.Resampling.NEAREST).save(preview_path)
-        print(f"Preview updated: {preview_path}")
+        if preview_style == "hd":
+            output = draw_game_hd(game)
+        elif preview_style == "pixel":
+            # True 64x32 LED simulation, enlarged with intentionally visible pixels.
+            output = frame.resize((640, 320), Image.Resampling.NEAREST)
+        else:
+            raise ValueError(f"Unknown preview style: {preview_style}")
+        output.save(preview_path)
+        print(f"Preview updated: {preview_path} ({output.width}x{output.height}, {preview_style})")
 
 
 def make_matrix(args):
@@ -370,6 +537,26 @@ def make_matrix(args):
     return RGBMatrix(options=options)
 
 
+def diagnostic_frames():
+    """A 64x32 RGB colour/wiring test followed by an AFL demo frame."""
+    for name, color in (("RED", "#E52B34"), ("GREEN", "#00CC55"), ("BLUE", "#2266FF")):
+        img = Image.new("RGB", (64, 32), color)
+        draw = ImageDraw.Draw(img)
+        draw.rectangle((2, 10, 61, 21), fill="black")
+        pixels(draw, (6, 13), name, "white")
+        yield img
+    yield draw_game(demo_game())
+
+
+def run_hardware_test(matrix, pause: float = 1.0) -> None:
+    if matrix is None:
+        raise RuntimeError("Hardware test needs an initialized RGB matrix")
+    for frame in diagnostic_frames():
+        show(frame, "matrix", ROOT / "preview.png", matrix)
+        time.sleep(pause)
+    print("Hardware diagnostic frames sent: red, green, blue, AFL demo")
+
+
 def demo_game():
     return {"id": 9999, "round": 10, "year": 2026, "hteam": 6, "ateam": 17,
             "hgoals": 12, "hbehinds": 8, "hscore": 80,
@@ -382,11 +569,18 @@ def main(argv=None) -> int:
     parser.add_argument("--driver", choices=("preview", "matrix"), default="preview")
     parser.add_argument("--once", action="store_true", help="Render one REST snapshot and exit")
     parser.add_argument("--demo", action="store_true", help="Render a demo without using Squiggle")
+    parser.add_argument("--hardware-test", action="store_true", help="Show RGB diagnostic frames on a real Pi matrix")
     parser.add_argument("--year", type=int, default=datetime.now(ZoneInfo("Australia/Melbourne")).year)
     parser.add_argument("--favorite", help="Team name or code, e.g. FRE or Fremantle")
     parser.add_argument("--preview", type=Path, default=ROOT / "preview.png")
+    parser.add_argument("--preview-style", choices=("hd", "pixel"), default="hd",
+                        help="Sharp 1280x640 desktop view (default) or exact LED pixel simulation")
+    parser.add_argument("--cache-dir", type=Path, default=CACHE,
+                        help="Writable on-disk Squiggle cache path (set for Pi services)")
     parser.add_argument("--cache-minutes", type=int, default=30)
     parser.add_argument("--refresh-minutes", type=int, default=30, help="REST refresh interval; live scores use SSE")
+    parser.add_argument("--rotate-seconds", type=int, default=15, help="Seconds between displayed games")
+    parser.add_argument("--rotate-limit", type=int, default=6, help="Maximum games to include in rotation")
     parser.add_argument("--mapping", default="regular", help="e.g. regular or adafruit-hat")
     parser.add_argument("--brightness", type=int, default=55)
     parser.add_argument("--gpio-slowdown", type=int, default=2)
@@ -395,48 +589,66 @@ def main(argv=None) -> int:
         parser.error("Do not poll Squiggle faster than every five minutes; live updates use SSE")
     if not 1 <= args.brightness <= 100:
         parser.error("Brightness must be 1..100")
+    if not 2 <= args.rotate_seconds <= 3600 or not 1 <= args.rotate_limit <= 30:
+        parser.error("Rotation settings must be 2..3600 seconds and 1..30 games")
+    if args.hardware_test and args.driver != "matrix":
+        parser.error("--hardware-test requires --driver matrix on a Raspberry Pi")
     matrix = make_matrix(args) if args.driver == "matrix" else None
+    if args.hardware_test:
+        run_hardware_test(matrix)
+        return 0
     if args.demo:
-        show(draw_game(demo_game()), args.driver, args.preview, matrix)
+        demo = demo_game()
+        show(draw_game(demo), args.driver, args.preview, matrix, demo, args.preview_style)
         return 0
     try:
         headers = contact_headers(os.environ.get("SQUIGGLE_CONTACT_EMAIL", ""))
     except ValueError as exc:
         parser.error(str(exc))
-    # REST snapshot is only used for fixture bootstrap and occasional resync.
-    # The Squiggle SSE event endpoint is used while a game is in progress.
-    while True:
-        try:
-            games = season_games(args.year, headers, args.cache_minutes)
-            state = {int(g["id"]): g for g in games if as_int(g.get("id")) is not None}
-            choices = select_games(list(state.values()), args.favorite)
-            selected = choices[0] if choices else None
-            show(draw_game(selected), args.driver, args.preview, matrix)
+    # One REST request per resync window; display rotation never polls Squiggle.
+    # A separate daemon consumes the single all-games SSE stream near kickoff.
+    lock = threading.Lock()
+    stop = threading.Event()
+    state: dict[int, dict] = {}
+    next_refresh = 0.0
+    step = 0
+    watcher = None
+    try:
+        while True:
+            now = time.monotonic()
+            if now >= next_refresh:
+                try:
+                    games = season_games(args.year, headers, args.cache_minutes, args.cache_dir)
+                    with lock:
+                        for game in games:
+                            game_id = as_int(game.get("id"))
+                            if game_id is not None:
+                                # Keep more recent in-memory SSE score information for live games.
+                                if game_id not in state or not is_live(state[game_id]):
+                                    state[game_id] = game
+                                else:
+                                    for field, value in game.items():
+                                        if field not in SCORE_KEYS + ("timestr", "complete", "winner"):
+                                            state[game_id][field] = value
+                except (RuntimeError, ValueError, OSError) as exc:
+                    print(f"Scoreboard error: {exc}", file=sys.stderr)
+                    if args.once and not state:
+                        return 1
+                next_refresh = now + args.refresh_minutes * 60
+            with lock:
+                snapshot = [dict(game) for game in state.values()]
+            selected = rotation_choice(snapshot, step, args.favorite, args.rotate_limit)
+            show(draw_game(selected), args.driver, args.preview, matrix, selected, args.preview_style)
             if args.once:
                 return 0
-            # SSE connects only while a game is live. No busy polling during the offseason.
-            if selected and is_live(selected):
-                try:
-                    sse_headers = dict(headers, Accept="text/event-stream", **{"Cache-Control": "no-cache"})
-                    game_id = int(selected["id"])
-                    with urlopen(Request(f"{EVENTS}/{game_id}", headers=sse_headers), timeout=90) as stream:
-                        for event_type, payload in event_messages(stream):
-                            if apply_event(state, event_type, payload):
-                                choices = select_games(list(state.values()), args.favorite)
-                                selected = choices[0] if choices else None
-                                show(draw_game(selected), args.driver, args.preview, matrix)
-                                if not selected or not is_live(selected) or int(selected.get("id", -1)) != game_id:
-                                    break
-                except (OSError, HTTPError, URLError, TimeoutError) as exc:
-                    print(f"SSE connection interrupted: {exc}; will reconnect", file=sys.stderr)
-                    time.sleep(10)
-            else:
-                time.sleep(args.refresh_minutes * 60)
-        except (RuntimeError, ValueError, OSError) as exc:
-            print(f"Scoreboard error: {exc}", file=sys.stderr)
-            if args.once:
-                return 1
-            time.sleep(60)
+            if watcher is None:
+                watcher = threading.Thread(target=follow_events,
+                                          args=(state, lock, stop, headers), daemon=True)
+                watcher.start()
+            step += 1
+            stop.wait(args.rotate_seconds)
+    finally:
+        stop.set()
 
 
 if __name__ == "__main__":
