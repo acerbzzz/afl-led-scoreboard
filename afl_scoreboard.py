@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 API = "https://api.squiggle.com.au/"
 EVENTS = "https://sse.squiggle.com.au/events"
@@ -269,16 +269,27 @@ def logo_image(full: str, size: int = 9) -> Image.Image:
         raise ValueError("Logo size must be positive")
     if not full:
         raise MissingLogoError("Club has no recognised logo mapping; check the Squiggle team name")
-    path = ROOT / "logos" / f"{full}.bmp"
-    if not path.is_file():
-        raise MissingLogoError(f"Required AFL club logo missing: {path}")
+    legacy = ROOT / "logos" / f"{full}.bmp"
+    if not legacy.is_file():
+        raise MissingLogoError(f"Required AFL club logo missing: {legacy}")
+    # Desktop previews prefer optional separately downloaded high-resolution PNGs.
+    # Physical 64x32 matrix keeps using the small built-in crests.
+    hd = ROOT / "logos_hd" / f"{full}.png"
+    path = hd if size >= 64 and hd.is_file() else legacy
     try:
         with Image.open(path) as source:
             source.load()
-            if source.width < 16 or source.height < 16:
-                raise ValueError("logo image is smaller than 16x16")
+            min_dimension = 160 if path == hd else 16
+            if min(source.size) < min_dimension:
+                raise ValueError(f"logo image is smaller than {min_dimension}x{min_dimension}")
             image = source.convert("RGBA")
-            return image.resize((size, size), Image.Resampling.LANCZOS)
+            if path == hd and image.getchannel("A").getextrema()[0] == 255:
+                raise ValueError("HD club logo must have a transparent background")
+            # Never stretch a crest to a square; contain and center it on alpha.
+            scaled = ImageOps.contain(image, (size, size), method=Image.Resampling.LANCZOS)
+            output = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            output.paste(scaled, ((size - scaled.width) // 2, (size - scaled.height) // 2))
+            return output
     except (OSError, ValueError) as exc:
         raise MissingLogoError(f"Required AFL club logo unreadable: {path} ({exc})") from exc
 
@@ -360,8 +371,9 @@ def draw_game(game: dict | None, width: int = 64, height: int = 32) -> Image.Ima
         pixels(draw, (4, 13), "NO AFL GAMES", "white")
         return image
     pixels(draw, (1, 2), f"R{game.get('round', '?')}"[:4], "#58D4FF")
-    status_color = "#37E881" if is_live(game) else ("#FF6B75" if status_text(game) == "FINAL" else "#FFD34D")
-    pixels(draw, (18, 2), status_text(game)[:11], status_color)
+    demo = bool(game.get("_demo"))
+    status_color = "#30DAF5" if demo else ("#37E881" if is_live(game) else ("#FF6B75" if status_text(game) == "FINAL" else "#FFD34D"))
+    pixels(draw, (18, 2), "DEMO" if demo else status_text(game)[:11], status_color)
     draw.line((0, 9, 63, 9), fill="#303030")
     for y, prefix, side in ((11, "h", "hteam"), (22, "a", "ateam")):
         short, full, color = team_data(game, side)
@@ -416,7 +428,9 @@ def draw_game_hd(game: dict | None) -> Image.Image:
     draw.rounded_rectangle((24, 24, 1256, 616), radius=30,
                            fill="#0b1525", outline="#2b3d52", width=2)
     draw.rectangle((28, 26, 1252, 32), fill="#12bdc7")
-    draw.text((65, 60), "AFL  /  LIVE SCOREBOARD", font=_font(38, True), fill="#ffffff")
+    demo = bool(game and game.get("_demo"))
+    header = "AFL  /  DEMO SCOREBOARD" if demo else "AFL  /  LIVE SCOREBOARD"
+    draw.text((65, 60), header, font=_font(38, True), fill="#ffffff")
 
     if game is None:
         _center_text(draw, (640, 342), "NO AFL GAMES AVAILABLE", _font(48, True), "#b8c6d9")
@@ -436,7 +450,9 @@ def draw_game_hd(game: dict | None) -> Image.Image:
     draw.text((66, 113), f"{round_name}    {date_text}", font=_font(24), fill="#9eb0c5")
 
     complete = as_int(game.get("complete")) or 0
-    if complete >= 100:
+    if demo:
+        state_label, detail, state_color = "DEMO", "SIMULATED SCORES", "#30daf5"
+    elif complete >= 100:
         state_label, detail, state_color = "FULL TIME", "FINAL RESULT", "#44d9ab"
     elif is_live(game):
         state_label, detail, state_color = "LIVE", status_text(game), "#fb686e"
@@ -452,10 +468,10 @@ def draw_game_hd(game: dict | None) -> Image.Image:
         draw.rounded_rectangle((55, y, 1225, y + 175), radius=22,
                                fill="#142135", outline="#30415a", width=2)
         draw.rounded_rectangle((57, y + 2, 64, y + 173), radius=3, fill=color)
-        draw.ellipse((86, y + 33, 192, y + 139), fill="#0b1423", outline=color, width=5)
-        # Show the real club crest on the HD display, not the former initials badge.
-        crest = logo_image(full, 96)
-        canvas.paste(crest, (91, y + 38), crest)
+        draw.ellipse((77, y + 23, 204, y + 150), fill="#0b1423", outline=color, width=3)
+        # Larger, transparent native-resolution crest with aspect ratio preserved.
+        crest = logo_image(full, 116)
+        canvas.paste(crest, (83, y + 29), crest)
         raw_name = game.get(side)
         display_name = (str(raw_name) if raw_name and not str(raw_name).isdigit() else full or short)
         display_name = display_name.replace("Stkilda", "St Kilda")
@@ -475,7 +491,9 @@ def draw_game_hd(game: dict | None) -> Image.Image:
                   font=total_font, fill="#ffffff")
 
     draw.text((66, 576), "6 POINTS = GOAL    •    1 POINT = BEHIND", font=_font(19), fill="#839ab3")
-    draw.text((1055, 576), "SQUIGGLE DATA", font=_font(17, True), fill="#7189a3")
+    draw.text((1018 if demo else 1055, 576),
+              "SAMPLE DATA" if demo else "SQUIGGLE DATA",
+              font=_font(17, True), fill="#7189a3")
     return canvas
 
 def apply_event(state: dict[int, dict], event_type: str, payload: dict) -> bool:
@@ -593,7 +611,8 @@ def demo_game():
     return {"id": 9999, "round": 10, "year": 2026, "hteam": 6, "ateam": 17,
             "hgoals": 12, "hbehinds": 8, "hscore": 80,
             "agoals": 9, "abehinds": 10, "ascore": 64,
-            "complete": 64, "timestr": "Q3 14:26", "date": "2026-05-24T05:20:00Z"}
+            "complete": 64, "timestr": "Q3 14:26", "date": "2026-05-24T05:20:00Z",
+            "_demo": True}
 
 
 def main(argv=None) -> int:

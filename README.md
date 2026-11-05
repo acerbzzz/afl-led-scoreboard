@@ -4,8 +4,8 @@ An original Australian-rules scoreboard for a **64×32 HUB75 RGB LED matrix** on
 
 ## Features
 
-- 64×32 LED output using [`rpi-rgb-led-matrix`](https://github.com/hzeller/rpi-rgb-led-matrix), plus a **640×320 PNG preview** that works without a Pi.
-- **Logos are required, not optional**: all 18 included club images are validated on startup, both teams use their real crests on the HD desktop preview and physical LED panel. Missing/unreadable assets cause a clear error instead of initials or coloured squares. The supplied artwork is low-resolution (32×32) and cannot become true HD detail just by enlarging it.
+- 64×32 LED output using [`rpi-rgb-led-matrix`](https://github.com/hzeller/rpi-rgb-led-matrix), plus a **crisp 1280×640 desktop preview** by default or 640×320 pixel-accurate LED simulation (`--preview-style pixel`).
+- **Logos are mandatory**: all 18 bundled team crests are validated at startup (no initials or colour-square fallbacks). Download 500px transparent replacements once for a much sharper desktop preview; the original icons remain for the 64×32 LED panel.
 - All 18 AFL clubs, optional team filter (`--favorite FRE`), Australian Eastern kickoff times, score in `12.8  80` format.
 - One-shot fixture lookup via Squiggle REST, **cached 30 minutes**, and a long-lived SSE stream for live updates (no aggressive REST polling).
 - **Automatic match rotation**: cycle through up to six relevant games every 15 seconds without extra REST requests; one SSE connection covers active matches.
@@ -21,6 +21,8 @@ python3 -m venv .venv
 source .venv/bin/activate           # Windows: .venv\\Scripts\\activate
 python -m pip install -r requirements.txt
 python afl_scoreboard.py --demo
+# To see how the small physical matrix will look:
+python afl_scoreboard.py --demo --preview-style pixel
 # open preview.png
 ```
 
@@ -41,7 +43,7 @@ python afl_scoreboard.py --year 2026 --favorite FRE
 python afl_scoreboard.py --year 2026 --rotate-seconds 10 --rotate-limit 6
 ```
 
-**Rotation:** The most relevant games are ranked live first, followed by upcoming fixtures and recently completed games. `--favorite FRE` limits the rotation to Fremantle matches. `--once` renders just the first selected game.  `Ctrl+C` stops rotation. The preview image is overwritten each cycle; open or reload it to view the current frame.
+**Rotation:** The most relevant games are ranked live first, followed by upcoming fixtures and recently completed games. `--favorite FRE` limits the rotation to Fremantle matches. `--once` renders just the first selected game.  `Ctrl+C` stops rotation. The preview image is overwritten each cycle; open or reload it to view the current frame. The default HD preview is for a desktop monitor, whereas `--preview-style pixel` reproduces the 64×32 matrix grid.
 
 **Season timing:** When no games are scheduled, the preview shows the latest result for the requested season (if one exists). Squiggle provides scores, fixture and approximate match progress; it does not guarantee a second-perfect game clock.
 
@@ -94,3 +96,17 @@ Inspired by the LED scoreboard concept of [mikemountain/nfl-led-scoreboard](http
 The `logos/` directory must contain all **18** checked-in club images with the exact filenames shown in `TEAMS` (for example `logos/Fremantle.bmp` and `logos/Brisbane.bmp`). These legacy files have `.bmp` filenames but contain images readable by Pillow. Keep the whole folder when copying to your Raspberry Pi.
 
 At startup, `verify_all_logos()` loads and validates every image. If even one is missing or corrupt, the application stops with an actionable message. An unrecognised Squiggle team name also stops that render instead of showing fake initials. This ensures no logo-free scoreboard. The 64×32 physical panel inherently limits fine crest details; the default HD preview shows larger full club logos but image quality is limited by the source assets.
+
+## Sharper transparent desktop logos
+
+The full-resolution desktop preview supports **18 locally cached 500px AFL club PNGs**. Download once in a Codespaces or regular PC terminal with:
+
+```bash
+python scripts/fetch_hd_logos.py && python scripts/fetch_hd_logos.py --check && python afl_scoreboard.py --demo
+```
+
+These come from ESPN's publicly accessible AFL logo image CDN, not from Squiggle, and are used only for the desktop preview. The downloader validates that every image is a readable transparent PNG of at least 160px, rejecting failed/incorrect/opaque downloads. If any download fails, it reports the failing club and leaves the previously installed set unchanged. With no HD set downloaded, the preview continues to display the original mandatory club logos; it does **not** invent logos. The 64×32 physical LED uses the bundled sprites.
+
+**Trademark note:** These external AFL club crests belong to their respective owners. `logos_hd/` is deliberately gitignored and is not covered by the project GPL; do not commit/repackage or use commercially without checking the rights holders' terms. If the ESPN URL is blocked or changes, no logo is silently substituted.
+
+Demo mode is prominently marked **DEMO** and **SAMPLE DATA**, including in the tiny LED frame. This prevents its illustrative scores from being mistaken for live Squiggle results.
