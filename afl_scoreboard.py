@@ -44,6 +44,37 @@ TEAMS = {
     18: ("WBD", "Western Bulldogs", "#2A6EC6"),
 }
 
+# Squiggle returns full club names (sometimes with nicknames), not just IDs.
+TEAM_ALIASES = {
+    "brisbanelions": 2,
+    "fremantledockers": 6,
+    "geelongcats": 7,
+    "goldcoastsuns": 8,
+    "greaterwesternsydney": 9,
+    "gwsgiants": 9,
+    "northmelbournekangaroos": 12,
+    "portadelaidepower": 14,
+    "stkildasaints": 15,
+    "st.kilda": 15,
+    "westcoasteagles": 17,
+}
+
+
+def normalize_team(value) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def resolve_team(value) -> tuple[str, str, str]:
+    if str(value).isdigit():
+        return TEAMS.get(int(value), (f"T{value}", "", "#AAAAAA"))
+    label = str(value or "---")
+    key = normalize_team(label)
+    for team in TEAMS.values():
+        if key in (normalize_team(team[0]), normalize_team(team[1])):
+            return team
+    team_id = TEAM_ALIASES.get(key)
+    return TEAMS[team_id] if team_id is not None else (label[:3].upper(), "", "#AAAAAA")
+
 
 def contact_headers(email: str) -> dict[str, str]:
     """Squiggle requires a human-readable User-Agent containing a contact email."""
@@ -90,7 +121,11 @@ def season_games(year: int, headers: dict[str, str], cache_minutes: int = 30, ca
 
 def iso_date(value) -> datetime:
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+        result = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        # Squiggle's zone-less match times use Australian Eastern local time.
+        if result.tzinfo is None:
+            result = result.replace(tzinfo=ZoneInfo("Australia/Melbourne"))
+        return result.astimezone(timezone.utc)
     except (ValueError, TypeError):
         return datetime.min.replace(tzinfo=timezone.utc)
 
@@ -106,11 +141,11 @@ def is_live(game: dict) -> bool:
 def matches_favorite(game: dict, favorite: str | None) -> bool:
     if not favorite:
         return True
-    needle = favorite.lower().replace(" ", "")
+    needle = normalize_team(favorite)
     for side in ("hteam", "ateam"):
-        tid = game.get(side)
-        name, full, _ = TEAMS.get(int(tid or 0), (str(tid), str(tid), "#FFFFFF")) if str(tid).isdigit() else (str(tid), str(tid), "#FFFFFF")
-        if any(needle in text.lower().replace(" ", "") for text in (name, full, str(tid))):
+        value = game.get(side)
+        short, full, _ = resolve_team(value)
+        if any(needle in normalize_team(text) for text in (short, full, value)):
             return True
     return False
 
@@ -154,12 +189,7 @@ def status_text(game: dict) -> str:
 
 
 def team_data(game: dict, side: str) -> tuple[str, str, str]:
-    val = game.get(side)
-    if str(val).isdigit():
-        return TEAMS.get(int(val), (f"T{val}", "", "#AAAAAA"))
-    text = str(val or "---")
-    by_name = next((v for v in TEAMS.values() if text.lower() in (v[0].lower(), v[1].lower())), None)
-    return by_name or (text[:3].upper(), "", "#AAAAAA")
+    return resolve_team(game.get(side))
 
 
 def logo_image(full: str, size: int = 9):

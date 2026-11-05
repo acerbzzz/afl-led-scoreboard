@@ -28,6 +28,20 @@ class ScoreboardTests(unittest.TestCase):
         self.assertEqual(afl.team_data(self.game, "hteam")[0], "FRE")
         self.assertEqual(afl.team_data(self.game, "ateam")[0], "WCE")
 
+    def test_squiggle_club_names_and_favorite_codes(self):
+        game = {"hteam": "Fremantle", "ateam": "Brisbane Lions"}
+        self.assertEqual(afl.team_data(game, "hteam")[:2], ("FRE", "Fremantle"))
+        self.assertEqual(afl.team_data(game, "ateam")[:2], ("BRI", "Brisbane"))
+        self.assertTrue(afl.matches_favorite(game, "FRE"))
+        self.assertTrue(afl.matches_favorite(game, "BRI"))
+        self.assertTrue(afl.matches_favorite({"hteam": "West Coast"}, "WCE"))
+        self.assertEqual(afl.resolve_team("St Kilda")[0], "STK")
+
+    def test_squiggle_naive_dates_are_melbourne_time(self):
+        from zoneinfo import ZoneInfo
+        mel = datetime(2026, 9, 26, 14, 30, tzinfo=ZoneInfo("Australia/Melbourne"))
+        self.assertEqual(afl.iso_date("2026-09-26 14:30:00"), mel.astimezone(timezone.utc))
+
     def test_live_and_final(self):
         self.assertTrue(afl.is_live(self.game))
         self.game["complete"] = 100
