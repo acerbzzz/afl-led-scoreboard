@@ -64,6 +64,30 @@ afl --favorite FRE
 
 Control+C stops the continuous scoreboard. The application fetches and caches fixtures approximately every 30 minutes, and listens to Squiggle's server-sent event endpoint when games are in progress. No invented scores; stale cached fixtures are clearly warned about on the terminal when the network fails. It doesn't depend on the HD PNG assets: the included actual legacy logos are mandatory for all clubs.
 
+## Goal animation on the LED panel
+
+During a live AFL game, the single existing Squiggle SSE connection reports
+`event: score` with `type: goal` and `side: hteam` / `ateam`.
+The Pi briefly shows the scoring team's real crest and a flashing GOAL!
+message for about 2.2 seconds, then resumes scores and game rotation.
+A new goal-count increase is required; startup snapshots, goals in already
+finished games, behinds, identical SSE replays and score-only updates cannot
+trigger a celebration. Works while rotating all clubs or following
+`--favorite FRE` (only games matching the filter).
+
+To test without a live match, use the **clearly simulated** offline animation:
+
+```sh
+afl --demo-goal --brightness 10
+```
+
+For a pixel-accurate preview without touching GPIO or the Internet:
+`afl --demo-goal --preview` writes `pi_zero_goal_preview.png` to the repository.
+Real games use `afl --brightness 10 --rotate-seconds 10` and animate on
+actual live goal events; `--no-goal-animation` disables this feature.
+Squiggle is a third-party score feed, not a guaranteed instantaneous
+official stadium clock.
+
 ## Optional startup once hardware works
 
 Only when the screen is stable, run `sh ~/afl-led-scoreboard/scripts/enable_pi_zero_service.sh`. The installer creates and enables a systemd service, but **does not immediately start it**, avoiding a display conflict with your test process. To start it: `sudo systemctl start afl-led-scoreboard`. Check `sudo journalctl -u afl-led-scoreboard -n 30`. Stop and disable with `sudo systemctl disable --now afl-led-scoreboard`.

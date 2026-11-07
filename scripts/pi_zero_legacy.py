@@ -8,6 +8,7 @@ Python-3.10-only desktop app. Logo assets must be present; never show impostors.
 from __future__ import print_function
 
 import argparse
+from collections import deque
 import errno
 import json
 import os
@@ -171,7 +172,8 @@ PIX = {
     '.': ('000', '000', '000', '000', '010'),
     '-': ('000', '000', '111', '000', '000'),
     ' ': ('000', '000', '000', '000', '000'),
-    '?': ('111', '001', '010', '000', '010')
+    '?': ('111', '001', '010', '000', '010'),
+    '!': ('010', '010', '010', '000', '010')
 }
 
 
@@ -385,6 +387,102 @@ def draw_game(game, logo_dir=None):
     return frame
 
 
+def pixel_text_scaled(draw, x, y, text, color, scale=2):
+    """A crisp, native-pixel 2x glyph for goal celebrations."""
+    for char in str(text).upper():
+        for dy, row in enumerate(PIX.get(char, PIX['?'])):
+            for dx, bit in enumerate(row):
+                if bit == '1':
+                    left, top = x + dx * scale, y + dy * scale
+                    draw.rectangle((left, top, left + scale - 1,
+                                    top + scale - 1), fill=color)
+        x += 4 * scale
+
+
+def draw_goal_frame(alert, phase, logo_dir=None):
+    """Render one 64x32 goal flash with the actual scoring club's crest."""
+    from PIL import Image, ImageDraw
+    team = club(alert['team'])
+    frame = Image.new('RGB', (64, 32), (0, 0, 0))
+    draw = ImageDraw.Draw(frame)
+    bright = phase % 2 == 0
+    color = team[3]
+    # Never fill the entire matrix; keep it legible and low-glare.
+    outline = color if bright else '#242631'
+    draw.rectangle((0, 0, 63, 31), outline=outline)
+    crest = logo(Image, team[2], 20, logo_dir)
+    frame.paste(crest, (2, 6), crest)
+    pixel_text_scaled(draw, 24, 4, 'GOAL!',
+                      '#FFE26B' if bright else '#A4B2D0', 2)
+    pixel_text(draw, 27, 23, team[1], color)
+    big_score(draw, 64, 21, alert.get('total', '--'), '#E3EAF4')
+    if bright:
+        for x, y in ((7, 2), (18, 3), (6, 28), (19, 28), (59, 2)):
+            draw.point((x, y), fill='#FFE26B')
+    return frame
+
+
+def show_goal_animation(matrix, alert, stop=None):
+    """Short animation followed by normal scoreboard restoration by caller."""
+    for phase in range(6):
+        if stop is not None and stop.is_set():
+            break
+        matrix.SetImage(draw_goal_frame(alert, phase))
+        if stop is not None:
+            if stop.wait(0.36):
+                break
+        else:
+            time.sleep(0.36)
+
+
+def goal_from_event(previous, current, ev_type, payload):
+    """Only a genuine NEW Squiggle SSE goal can trigger an animation.
+
+    A first game snapshot, a behind, stale replay, score correction or final
+    fixture must not celebrate. Never infer goals from points-only changes.
+    """
+    if (ev_type != 'score' or not isinstance(payload, dict) or
+            str(payload.get('type') or '').lower() != 'goal' or
+            not isinstance(previous, dict) or not isinstance(current, dict) or
+            not live(current)):
+        return None
+    side = payload.get('side')
+    if side not in ('hteam', 'ateam'):
+        return None
+    score_side = 'h' if side == 'hteam' else 'a'
+    old_goals = num(previous.get(score_side + 'goals'))
+    new_goals = num(current.get(score_side + 'goals'))
+    if old_goals is None or new_goals is None or new_goals <= old_goals:
+        return None
+    if (num(previous.get('complete')) or 0) >= 100:
+        return None
+    try:
+        team = club(current.get(side))
+    except ValueError:
+        return None
+    scorer = num(payload.get('team'))
+    if scorer is not None and scorer != team[0]:
+        return None
+    return {'team': team[2], 'code': team[1], 'game_id': num(current.get('id')),
+            'total': score(current, score_side)[1]}
+
+
+def update_live_state(state, ev_type, payload, alerts, favorite=None):
+    """Merge SSE payload once and queue at most one alert for each goal."""
+    game_id = num(payload.get('id' if ev_type == 'game' else 'gameid')) if isinstance(payload, dict) else None
+    previous = dict(state[game_id]) if game_id in state else None
+    if not apply_event(state, ev_type, payload):
+        return False
+    if alerts is None:
+        return False
+    current = state.get(game_id)
+    alert = goal_from_event(previous, current, ev_type, payload)
+    if alert is not None and match_favorite(current, favorite):
+        alerts.append(alert)
+        return True
+    return False
+
+
 def demo_game():
     return {'id': 0, 'round': 10, 'hteam': 'Fremantle', 'ateam': 'West Coast',
             'hgoals': 12, 'hbehinds': 8, 'hscore': 80,
@@ -543,7 +641,8 @@ def watch_needed(games):
     return False
 
 
-def event_worker(state, lock, stop, headers):
+def event_worker(state, lock, stop, headers, alerts=None, wakeup=None,
+                 favorite=None):
     hdr = dict(headers)
     hdr['Accept'] = 'text/event-stream'
     while not stop.is_set():
@@ -559,7 +658,10 @@ def event_worker(state, lock, stop, headers):
                     if stop.is_set():
                         break
                     with lock:
-                        apply_event(state, ev_type, payload)
+                        new_goal = update_live_state(state, ev_type, payload,
+                                                     alerts, favorite)
+                        if new_goal and wakeup is not None:
+                            wakeup.set()
             finally:
                 response.close()
         except Exception as exc:
@@ -586,6 +688,10 @@ def create_matrix(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description='AFL LED scoreboard for original Pi Zero W (Python 2.7)')
     parser.add_argument('--demo', action='store_true', help='Clearly labelled synthetic test')
+    parser.add_argument('--demo-goal', action='store_true',
+                        help='Show an offline goal animation without live scores')
+    parser.add_argument('--no-goal-animation', action='store_true',
+                        help='Disable celebrations for live score events')
     parser.add_argument('--once', action='store_true', help='Draw one real fixture and exit after 20s')
     parser.add_argument('--preview', action='store_true', help='Write a 640x320 PNG without GPIO')
     parser.add_argument('--email', help='Squiggle identification email (not saved in Git)')
@@ -608,14 +714,30 @@ def main(argv=None):
         # The matrix driver can drop privileges to 'daemon' during init,
         # making /etc/afl-led-scoreboard-contact (mode 0600) unreadable.
         # Offline demo mode never requires the contact file.
-        headers = None if args.demo else contact(read_email(args.email))
+        headers = None if (args.demo or args.demo_goal) else contact(read_email(args.email))
         matrix = None if args.preview else create_matrix(args)
-        if args.demo:
-            frame = draw_game(demo_game())
+        if args.demo or args.demo_goal:
+            demo = demo_game()
+            frame = draw_game(demo)
             if args.preview:
                 from PIL import Image
                 frame.resize((640, 320), Image.NEAREST).save(os.path.join(BASE, 'pi_zero_preview.png'))
-                print('Wrote pi_zero_preview.png; demo scores only')
+                if args.demo_goal:
+                    result = draw_goal_frame({'team': 'Fremantle', 'total': '86'}, 0)
+                    result.resize((640, 320), Image.NEAREST).save(
+                        os.path.join(BASE, 'pi_zero_goal_preview.png'))
+                    print('Wrote pi_zero_goal_preview.png; simulated goal only')
+                else:
+                    print('Wrote pi_zero_preview.png; demo scores only')
+            elif args.demo_goal:
+                matrix.SetImage(frame)
+                time.sleep(1)
+                print('SIMULATED Fremantle goal; no live data.')
+                show_goal_animation(matrix, {'team': 'Fremantle', 'total': '86'})
+                demo.update({'hgoals': 13, 'hscore': 86})
+                matrix.SetImage(draw_game(demo))
+                time.sleep(5)
+                matrix.Clear()
             else:
                 matrix.SetImage(frame)
                 print('AFL DEMO is on the matrix for 20 seconds (no live data).')
@@ -624,6 +746,8 @@ def main(argv=None):
             return 0
         lock = threading.RLock()
         stop = threading.Event()
+        alerts = deque(maxlen=5)
+        wakeup = threading.Event()
         state = {}
         worker = None
         last_fetch = 0
@@ -649,6 +773,13 @@ def main(argv=None):
                         return 1
                 last_fetch = time.time()
             with lock:
+                next_goal = alerts.popleft() if alerts else None
+            if next_goal is not None:
+                print('GOAL: %s (game %s)' % (next_goal['code'],
+                                                next_goal['game_id']))
+                if not args.preview:
+                    show_goal_animation(matrix, next_goal, stop)
+            with lock:
                 pool = games_ranked(list(state.values()), args.favorite)
                 chosen = dict(pool[turn % min(6, len(pool))]) if pool else None
             frame = draw_game(chosen)
@@ -664,11 +795,19 @@ def main(argv=None):
                     matrix.Clear()
                 return 0
             if worker is None:
-                worker = threading.Thread(target=event_worker, args=(state, lock, stop, headers))
+                worker = threading.Thread(target=event_worker, args=(
+                    state, lock, stop, headers,
+                    None if args.no_goal_animation else alerts,
+                    wakeup, args.favorite))
                 worker.daemon = True
                 worker.start()
             turn += 1
-            stop.wait(args.rotate_seconds)
+            with lock:
+                have_pending_goal = bool(alerts)
+                if not have_pending_goal:
+                    wakeup.clear()
+            if not have_pending_goal:
+                wakeup.wait(args.rotate_seconds)
     except KeyboardInterrupt:
         return 0
     except Exception as exc:

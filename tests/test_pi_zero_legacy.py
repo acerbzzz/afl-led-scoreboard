@@ -153,6 +153,98 @@ class LegacyTests(unittest.TestCase):
         self.assertTrue(any(r >= 125 and g >= 125 and b >= 125 and a > 100
                             for r, g, b, a in badge.getdata()))
 
+    def test_new_goal_from_sse_triggers_once_and_updates_score(self):
+        from collections import deque
+        state = {31: dict(afl.demo_game(), id=31, complete=48)}
+        pending = deque(maxlen=5)
+        payload = {'gameid': 31, 'type': 'goal', 'side': 'hteam',
+                   'team': 6, 'complete': 49,
+                   'score': {'hgoals': 13, 'hscore': 86, 'hbehinds': 8}}
+        self.assertTrue(afl.update_live_state(state, 'score', payload, pending))
+        self.assertEqual(list(pending)[0]['team'], 'Fremantle')
+        self.assertEqual(list(pending)[0]['total'], '86')
+        self.assertEqual(state[31]['hgoals'], 13)
+        # Replayed SSE events cannot trigger a second goal animation.
+        self.assertFalse(afl.update_live_state(state, 'score', payload, pending))
+        self.assertEqual(len(pending), 1)
+
+    def test_away_goal_and_favorite_selection(self):
+        from collections import deque
+        initial = dict(afl.demo_game(), id=31, complete=48)
+        payload = {'gameid': 31, 'type': 'goal', 'side': 'ateam',
+                   'team': 17, 'complete': 49,
+                   'score': {'agoals': 10, 'ascore': 70}}
+        pending = deque(maxlen=5)
+        state = {31: dict(initial)}
+        self.assertTrue(afl.update_live_state(state, 'score', payload, pending, 'WCE'))
+        self.assertEqual(pending[0]['team'], 'West Coast')
+        self.assertEqual(pending[0]['total'], '70')
+        state = {31: dict(initial)}
+        pending.clear()
+        self.assertFalse(afl.update_live_state(state, 'score', payload, pending, 'GEE'))
+        self.assertFalse(pending)
+
+    def test_no_animation_for_behind_snapshot_points_only_or_final(self):
+        from collections import deque
+        base = dict(afl.demo_game(), id=31, complete=48)
+        cases = [
+            ('score', {'gameid': 31, 'type': 'behind', 'side': 'hteam',
+                       'score': {'hbehinds': 9, 'hscore': 81}}),
+            ('score', {'gameid': 31, 'side': 'hteam',
+                       'score': {'hgoals': 13, 'hscore': 86}}),
+            ('score', {'gameid': 31, 'type': 'goal', 'side': 'hteam',
+                       'score': {'hscore': 86}}),
+            ('score', {'gameid': 31, 'type': 'goal', 'side': 'hteam',
+                       'team': 17, 'score': {'hgoals': 13, 'hscore': 86}}),
+            ('score', {'gameid': 31, 'type': 'goal', 'side': 'hteam',
+                       'complete': 100,
+                       'score': {'hgoals': 13, 'hscore': 86}}),
+            ('game', dict(base, hgoals=13, hscore=86)),
+        ]
+        for ev_type, payload in cases:
+            state, alerts = {31: dict(base)}, deque()
+            self.assertFalse(afl.update_live_state(state, ev_type, payload,
+                                                  alerts))
+            self.assertFalse(alerts)
+        # With no baseline, even a 'goal' event is not a trustworthy new goal.
+        state, alerts = {}, deque()
+        self.assertFalse(afl.update_live_state(state, 'score',
+                         cases[3][1], alerts))
+        self.assertFalse(alerts)
+
+    def test_goal_frames_keep_64x32_and_use_real_team_logos(self):
+        from PIL import Image
+        frames = [afl.draw_goal_frame({'team': 'Fremantle',
+                                      'total': '86'}, phase)
+                  for phase in range(6)]
+        self.assertTrue(all(frame.size == (64, 32) for frame in frames))
+        self.assertTrue(all(frame.getbbox() for frame in frames))
+        self.assertNotEqual(frames[0].tobytes(), frames[1].tobytes())
+        self.assertNotEqual(frames[1].tobytes(), frames[2].tobytes())
+        self.assertTrue(afl.draw_goal_frame({'team': 'West Coast',
+                           'total': '70'}, 0).getbbox())
+
+    def test_offline_demo_goal_never_contacts_squiggle(self):
+        with mock.patch.object(afl, 'urlopen', side_effect=AssertionError(
+                'Offline goal demo must not call Squiggle')), \
+             mock.patch.object(afl, 'read_email', side_effect=AssertionError(
+                'Offline goal demo should not require Squiggle contact')):
+            self.assertEqual(afl.main(['--demo-goal', '--preview']), 0)
+        from PIL import Image
+        with Image.open(HERE / 'pi_zero_goal_preview.png') as image:
+            self.assertEqual(image.size, (640, 320))
+
+    def test_goal_animation_emits_six_frames(self):
+        class FakeMatrix(object):
+            def __init__(self):
+                self.frames = []
+            def SetImage(self, frame):
+                self.frames.append(frame.copy())
+        matrix = FakeMatrix()
+        with mock.patch.object(afl.time, 'sleep', return_value=None):
+            afl.show_goal_animation(matrix, {'team': 'Fremantle', 'total': '86'})
+        self.assertEqual(len(matrix.frames), 6)
+
     def test_rotation(self):
         base = afl.demo_game()
         older = dict(base, id=1, complete=100, date='2026-09-21 18:00:00')
