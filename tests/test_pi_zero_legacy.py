@@ -245,6 +245,86 @@ class LegacyTests(unittest.TestCase):
             afl.show_goal_animation(matrix, {'team': 'Fremantle', 'total': '86'})
         self.assertEqual(len(matrix.frames), 6)
 
+    def test_full_time_event_only_on_live_to_final_transition(self):
+        from collections import deque
+        initial = dict(afl.demo_game(), id=101, complete=96)
+        state, queue = {101: dict(initial)}, deque()
+        event = {'gameid': 101, 'complete': 100}
+        self.assertTrue(afl.update_live_state(state, 'complete', event, queue))
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]['kind'], 'final')
+        self.assertEqual(queue[0]['winner'], 'Fremantle')
+        self.assertEqual(queue[0]['margin'], 16)
+        self.assertFalse(afl.update_live_state(state, 'complete', event, queue))
+        self.assertEqual(len(queue), 1)
+        # Startup history and unplayed fixtures must never trigger celebration.
+        for complete in (0, 100):
+            prior = dict(initial, complete=complete)
+            state, queue = {101: prior}, deque()
+            self.assertFalse(afl.update_live_state(state, 'complete', event, queue))
+            self.assertEqual(len(queue), 0)
+
+    def test_final_siren_away_win_draw_and_missing_score(self):
+        home = dict(afl.demo_game(), id=17, complete=98)
+        away_wins = dict(home, complete=100, ascore=93)
+        result = afl.final_from_transition(home, away_wins)
+        self.assertEqual((result['winner'], result['margin']), ('West Coast', 13))
+        draw = dict(home, complete=100, ascore=80)
+        self.assertIsNone(afl.final_from_transition(home, draw)['winner'])
+        missing = dict(home, complete=100, hscore=None)
+        self.assertIsNone(afl.final_from_transition(home, missing))
+        final = afl.draw_final_frame(result, 0)
+        self.assertEqual(final.size, (64, 32))
+        self.assertNotEqual(final.tobytes(),
+                            afl.draw_final_frame(result, 1).tobytes())
+        self.assertEqual(afl.draw_final_frame(
+            afl.final_from_transition(home, draw), 0).size, (64, 32))
+
+    def test_standings_parse_rank_and_real_clubs(self):
+        raw = {'standings': [
+            {'id': 17, 'rank': 18, 'pts': 8, 'wins': 2, 'percentage': 72.3},
+            {'id': 6, 'rank': 1, 'pts': 72, 'wins': 18, 'percentage': 145.2},
+            {'id': 6, 'rank': 3, 'pts': 40, 'wins': 10, 'percentage': 100.0},
+            {'id': 99, 'rank': 2, 'pts': 60, 'wins': 15, 'percentage': 118.0}
+        ]}
+        rows = afl.normalize_standings(raw)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row['rank'] for row in rows], [1, 18])
+        self.assertEqual(rows[0]['code'], 'FRE')
+        self.assertEqual(rows[1]['pts'], 8)
+        self.assertEqual(afl.draw_ladder_frame(rows, 0).size, (64, 32))
+        self.assertEqual(afl.draw_ladder_frame(rows, 1).size, (64, 32))
+        self.assertEqual(afl.draw_ladder_frame([], 0).size, (64, 32))
+        with self.assertRaises(ValueError):
+            afl.normalize_standings({'ladder': []})
+
+    def test_real_standings_request_and_cache(self):
+        class Response(object):
+            def read(self):
+                return (b'{"standings":[{"id":6,"rank":1,"pts":64,"wins":16,'
+                        b'"percentage":128.3}]}')
+            def close(self):
+                pass
+        with tempfile.TemporaryDirectory() as temp:
+            with mock.patch.object(afl.tempfile, 'gettempdir', return_value=temp):
+                with mock.patch.object(afl, 'urlopen', return_value=Response()) as call:
+                    rows = afl.get_standings(2026, {'User-Agent':'test@example.org'})
+                    self.assertEqual(rows[0]['team'], 'Fremantle')
+                    self.assertEqual(call.call_args[0][0].get_full_url(),
+                                     'https://api.squiggle.com.au/?q=standings;year=2026')
+                with mock.patch.object(afl, 'urlopen',
+                                       side_effect=AssertionError('No duplicate fetch')):
+                    self.assertEqual(afl.get_standings(2026, {'User-Agent':'test@example.org'}), rows)
+
+    def test_offline_upgrades_demo_no_email_or_network(self):
+        with mock.patch.object(afl, 'urlopen', side_effect=AssertionError('No network')), \
+             mock.patch.object(afl, 'read_email', side_effect=AssertionError('No contact')):
+            self.assertEqual(afl.main(['--demo-upgrades','--preview']), 0)
+        # The physical test exercises real animation; preview must remain 64x32-scaled.
+        from PIL import Image
+        with Image.open(HERE / 'pi_zero_preview.png') as frame:
+            self.assertEqual(frame.size, (640, 320))
+
     def test_rotation(self):
         base = afl.demo_game()
         older = dict(base, id=1, complete=100, date='2026-09-21 18:00:00')

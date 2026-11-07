@@ -25,6 +25,7 @@ except ImportError:  # Python 3 during tests
     from urllib.request import Request, urlopen
 
 API = 'https://api.squiggle.com.au/?q=games;year=%s'
+STANDINGS_API = 'https://api.squiggle.com.au/?q=standings;year=%s'
 EVENTS = 'https://sse.squiggle.com.au/events'
 BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 TEAM_LIST = [
@@ -173,6 +174,7 @@ PIX = {
     '-': ('000', '000', '111', '000', '000'),
     ' ': ('000', '000', '000', '000', '000'),
     '?': ('111', '001', '010', '000', '010'),
+    '%': ('101', '001', '010', '100', '101'),
     '!': ('010', '010', '010', '000', '010')
 }
 
@@ -477,10 +479,183 @@ def update_live_state(state, ev_type, payload, alerts, favorite=None):
         return False
     current = state.get(game_id)
     alert = goal_from_event(previous, current, ev_type, payload)
+    if alert is None:
+        alert = final_from_transition(previous, current)
     if alert is not None and match_favorite(current, favorite):
         alerts.append(alert)
         return True
     return False
+
+
+def final_from_transition(previous, current):
+    """Celebrate only a known match transitioning from LIVE to FINAL.
+
+    This deliberately does not animate historic results, startup snapshots,
+    late repeats, a match that never started, or matches without known scores.
+    """
+    if (not isinstance(previous, dict) or not isinstance(current, dict)
+            or not live(previous)
+            or (num(current.get('complete')) or 0) < 100):
+        return None
+    home = num(current.get('hscore'))
+    away = num(current.get('ascore'))
+    if home is None or away is None or home < 0 or away < 0:
+        return None
+    try:
+        home_team = club(current.get('hteam'))
+        away_team = club(current.get('ateam'))
+    except ValueError:
+        return None
+    winner = home_team if home > away else away_team if away > home else None
+    return {'kind': 'final', 'game_id': num(current.get('id')),
+            'winner': winner[2] if winner else None,
+            'code': winner[1] if winner else 'DRAW',
+            'hteam': home_team[2], 'ateam': away_team[2],
+            'home': home, 'away': away, 'margin': abs(home - away)}
+
+
+def draw_final_frame(alert, phase, logo_dir=None):
+    """Pixel-perfect full-time celebration on one 64x32 HUB75 panel."""
+    from PIL import Image, ImageDraw
+    frame = Image.new('RGB', (64, 32), (0, 0, 0))
+    draw = ImageDraw.Draw(frame)
+    winner = club(alert['winner']) if alert.get('winner') else None
+    color = winner[3] if winner else '#54D0FF'
+    draw.rectangle((0, 0, 63, 31), outline=color if phase % 2 == 0 else '#283040')
+    if winner is not None:
+        crest = logo(Image, winner[2], 20, logo_dir)
+        frame.paste(crest, (1, 6), crest)
+    else:
+        home_crest = logo(Image, club(alert['hteam'])[2], 12, logo_dir)
+        away_crest = logo(Image, club(alert['ateam'])[2], 12, logo_dir)
+        frame.paste(home_crest, (2, 2), home_crest)
+        frame.paste(away_crest, (2, 18), away_crest)
+    pixel_text(draw, 26, 2, 'FULL TIME', '#FFF0A8' if phase % 2 == 0 else '#92B6D8')
+    pixel_text(draw, 27, 12, winner[1] if winner else 'DRAW', color)
+    result = ('BY %d' % alert['margin']) if winner else ('%d-%d' % (alert['home'], alert['away']))
+    pixel_text(draw, 27, 22, result[:9], '#FFFFFF')
+    return frame
+
+
+def show_final_animation(matrix, alert, stop=None):
+    for phase in range(8):
+        if stop is not None and stop.is_set():
+            break
+        matrix.SetImage(draw_final_frame(alert, phase))
+        if stop is not None:
+            if stop.wait(0.40):
+                break
+        else:
+            time.sleep(0.40)
+
+
+def normalize_standings(data):
+    """Validate real Squiggle standings; no invented ranks or points."""
+    if not isinstance(data, dict) or not isinstance(data.get('standings'), list):
+        raise ValueError('Squiggle did not return standings')
+    rows = []
+    used_teams, used_ranks = set(), set()
+    for item in data['standings']:
+        if not isinstance(item, dict):
+            continue
+        rank, pts = num(item.get('rank')), num(item.get('pts'))
+        wins = num(item.get('wins'))
+        if rank is None or not 1 <= rank <= 18 or pts is None or pts < 0:
+            continue
+        try:
+            team = club(item.get('id') if item.get('id') is not None else item.get('name'))
+            pct = float(item['percentage'])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if pct < 0 or pct > 2000 or pct != pct or team[0] in used_teams or rank in used_ranks:
+            continue
+        used_teams.add(team[0])
+        used_ranks.add(rank)
+        rows.append({'rank': rank, 'team': team[2], 'code': team[1],
+                     'pts': pts, 'percentage': pct, 'wins': wins})
+    rows.sort(key=lambda row: row['rank'])
+    return rows
+
+
+def standings_path(year):
+    return os.path.join(os.path.dirname(cache_path(year)),
+                        'pi_zero_standings_%s.json' % year)
+
+
+def get_standings(year, headers, cache_minutes=60):
+    """Fetch the ACTUAL AFL ladder (q=standings, NOT predictive q=ladder)."""
+    path = standings_path(year)
+    if os.path.isfile(path) and time.time() - os.stat(path).st_mtime < cache_minutes * 60:
+        with open(path, 'r') as stream:
+            return normalize_standings(json.load(stream))
+    try:
+        response = urlopen(Request(STANDINGS_API % year, headers=headers), timeout=20)
+        try:
+            parsed = json.loads(response.read().decode('utf-8'))
+        finally:
+            response.close()
+        standings = normalize_standings(parsed)
+        if not standings:
+            raise ValueError('Squiggle returned no valid ladder positions')
+        tmp = path + '.part'
+        with open(tmp, 'w') as stream:
+            json.dump(parsed, stream)
+        os.rename(tmp, path)
+        return standings
+    except Exception as exc:
+        if os.path.isfile(path):
+            print('WARNING: Showing stale AFL ladder (%s)' % exc, file=sys.stderr)
+            with open(path, 'r') as stream:
+                return normalize_standings(json.load(stream))
+        raise
+
+
+def draw_ladder_frame(rows, page, logo_dir=None):
+    """Two complete 16px team-crest rows per page, across all 18 teams."""
+    from PIL import Image, ImageDraw
+    frame = Image.new('RGB', (64, 32), (0, 0, 0))
+    draw = ImageDraw.Draw(frame)
+    if not rows:
+        pixel_text(draw, 2, 10, 'NO LADDER DATA', '#D9B16A')
+        return frame
+    start = (page % ((len(rows) + 1) // 2)) * 2
+    for slot, row in enumerate(rows[start:start + 2]):
+        y = 16 * slot
+        team = club(row['team'])
+        crest = logo(Image, team[2], 16, logo_dir)
+        frame.paste(crest, (0, y), crest)
+        draw.line((16, y + 1, 16, y + 14), fill=team[3])
+        pixel_text(draw, 18, y + 1, '%02d' % row['rank'], '#FFFFFF')
+        pixel_text(draw, 28, y + 1, team[1], team[3])
+        pixel_text(draw, 51, y + 1, 'P', '#99C1D1')
+        points = str(row['pts'])[:2]
+        pixel_text(draw, 64 - 4 * len(points), y + 1, points, '#FFFFFF')
+        if row['wins'] is not None:
+            pixel_text(draw, 18, y + 9, 'W%d' % row['wins'], '#B8D5E3')
+        pct = ('%d%%' % int(round(row['percentage'])))[:6]
+        pixel_text(draw, 64 - 4 * len(pct), y + 9, pct, '#B8D5E3')
+    draw.line((17, 15, 63, 15), fill='#27303C')
+    return frame
+
+
+def draw_ladder_intro(demo=False):
+    from PIL import Image, ImageDraw
+    frame = Image.new('RGB', (64, 32), (0, 0, 0))
+    draw = ImageDraw.Draw(frame)
+    pixel_text_scaled(draw, 7, 2, 'AFL', '#63CFFF', 2)
+    pixel_text_scaled(draw, 7, 17, 'LADDER', '#FFDD66', 2)
+    if demo:
+        pixel_text(draw, 46, 2, 'DEMO', '#CD86E9')
+    return frame
+
+
+def demo_standings():
+    """Synthetic numbers are restricted to explicitly labelled offline demos."""
+    return normalize_standings({'standings': [
+        {'id': 6, 'rank': 1, 'pts': 64, 'wins': 16, 'percentage': 137.3},
+        {'id': 17, 'rank': 2, 'pts': 60, 'wins': 15, 'percentage': 125.0},
+        {'id': 2, 'rank': 3, 'pts': 56, 'wins': 14, 'percentage': 117.4},
+        {'id': 14, 'rank': 4, 'pts': 52, 'wins': 13, 'percentage': 114.2}]})
 
 
 def demo_game():
@@ -688,6 +863,12 @@ def create_matrix(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description='AFL LED scoreboard for original Pi Zero W (Python 2.7)')
     parser.add_argument('--demo', action='store_true', help='Clearly labelled synthetic test')
+    parser.add_argument('--demo-upgrades', action='store_true',
+                        help='Offline final-siren plus ladder demo, using simulated data')
+    parser.add_argument('--ladder-only', action='store_true',
+                        help='Rotate through all real AFL ladder positions')
+    parser.add_argument('--ladder-every', type=int, default=0,
+                        help='Show the next ladder page every N match screens; 0 disables')
     parser.add_argument('--demo-goal', action='store_true',
                         help='Show an offline goal animation without live scores')
     parser.add_argument('--no-goal-animation', action='store_true',
@@ -706,6 +887,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not 2000 <= args.year <= 2100:
         parser.error('Invalid AFL season year')
+    if args.ladder_every < 0 or args.ladder_every > 99:
+        parser.error('Use --ladder-every 0..99')
     if args.rotate_seconds < 5 or not 1 <= args.brightness <= 100:
         parser.error('Rotate interval >=5 seconds and brightness 1..100 required')
     try:
@@ -714,9 +897,9 @@ def main(argv=None):
         # The matrix driver can drop privileges to 'daemon' during init,
         # making /etc/afl-led-scoreboard-contact (mode 0600) unreadable.
         # Offline demo mode never requires the contact file.
-        headers = None if (args.demo or args.demo_goal) else contact(read_email(args.email))
+        headers = None if (args.demo or args.demo_goal or args.demo_upgrades) else contact(read_email(args.email))
         matrix = None if args.preview else create_matrix(args)
-        if args.demo or args.demo_goal:
+        if args.demo or args.demo_goal or args.demo_upgrades:
             demo = demo_game()
             frame = draw_game(demo)
             if args.preview:
@@ -729,6 +912,23 @@ def main(argv=None):
                     print('Wrote pi_zero_goal_preview.png; simulated goal only')
                 else:
                     print('Wrote pi_zero_preview.png; demo scores only')
+            elif args.demo_upgrades:
+                from PIL import Image
+                print('SIMULATED FINAL and LADDER; no Squiggle connection.')
+                matrix.SetImage(frame)
+                time.sleep(1)
+                finished = dict(demo, complete=100, hscore=80, ascore=64)
+                alert = final_from_transition(demo, finished)
+                show_final_animation(matrix, alert)
+                rows = demo_standings()
+                matrix.SetImage(draw_ladder_intro(demo=True))
+                time.sleep(1.5)
+                for page in range(2):
+                    matrix.SetImage(draw_ladder_frame(rows, page))
+                    time.sleep(4)
+                matrix.SetImage(frame)
+                time.sleep(3)
+                matrix.Clear()
             elif args.demo_goal:
                 matrix.SetImage(frame)
                 time.sleep(1)
@@ -749,11 +949,20 @@ def main(argv=None):
         alerts = deque(maxlen=5)
         wakeup = threading.Event()
         state = {}
+        standings = []
+        last_standings_fetch = 0
+        ladder_page = 0
         worker = None
         last_fetch = 0
         turn = 0
         while True:
-            if time.time() - last_fetch >= 30 * 60:
+            if (args.ladder_only or args.ladder_every) and time.time() - last_standings_fetch >= 60 * 60:
+                try:
+                    standings = get_standings(args.year, headers)
+                except Exception as exc:
+                    print('AFL ladder fetch failed: %s' % exc, file=sys.stderr)
+                last_standings_fetch = time.time()
+            if not args.ladder_only and time.time() - last_fetch >= 30 * 60:
                 try:
                     games = get_season(args.year, headers)
                     with lock:
@@ -775,26 +984,44 @@ def main(argv=None):
             with lock:
                 next_goal = alerts.popleft() if alerts else None
             if next_goal is not None:
-                print('GOAL: %s (game %s)' % (next_goal['code'],
-                                                next_goal['game_id']))
-                if not args.preview:
-                    show_goal_animation(matrix, next_goal, stop)
+                if next_goal.get('kind') == 'final':
+                    print('FINAL SIREN: %s (game %s)' % (
+                        next_goal['code'], next_goal['game_id']))
+                    if not args.preview:
+                        show_final_animation(matrix, next_goal, stop)
+                else:
+                    print('GOAL: %s (game %s)' % (
+                        next_goal['code'], next_goal['game_id']))
+                    if not args.preview:
+                        show_goal_animation(matrix, next_goal, stop)
             with lock:
                 pool = games_ranked(list(state.values()), args.favorite)
                 chosen = dict(pool[turn % min(6, len(pool))]) if pool else None
-            frame = draw_game(chosen)
+            show_ladder = args.ladder_only or (args.ladder_every > 0
+                             and turn > 0 and turn % (args.ladder_every + 1) == 0)
+            if show_ladder:
+                frame = draw_ladder_frame(standings, ladder_page)
+                print('AFL LADDER page %s, season %s' %
+                      (ladder_page + 1, args.year))
+                ladder_page += 1
+            else:
+                frame = draw_game(chosen)
             if args.preview:
                 from PIL import Image
                 frame.resize((640, 320), Image.NEAREST).save(os.path.join(BASE, 'pi_zero_preview.png'))
             else:
                 matrix.SetImage(frame)
-            print('AFL %s: %s vs %s' % (status(chosen) if chosen else 'NONE', chosen.get('hteam') if chosen else '-', chosen.get('ateam') if chosen else '-'))
+            if not show_ladder:
+                print('AFL %s: %s vs %s' % (
+                    status(chosen) if chosen else 'NONE',
+                    chosen.get('hteam') if chosen else '-',
+                    chosen.get('ateam') if chosen else '-'))
             if args.once:
                 if not args.preview:
                     time.sleep(20)
                     matrix.Clear()
                 return 0
-            if worker is None:
+            if not args.ladder_only and worker is None:
                 worker = threading.Thread(target=event_worker, args=(
                     state, lock, stop, headers,
                     None if args.no_goal_animation else alerts,

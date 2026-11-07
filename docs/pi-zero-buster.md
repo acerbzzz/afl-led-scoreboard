@@ -95,3 +95,42 @@ Only when the screen is stable, run `sh ~/afl-led-scoreboard/scripts/enable_pi_z
 ## Limitations
 
 This adapter is designed for Python 2.7, but its automated tests run on current Python with fake GPIO bindings. The real Pi Zero Python 2 runtime and Squiggle HTTPS connections **need verification on the actual device**. Buster is unsupported and has security limitations. We avoid a risky in-place OS upgrade on the user's only microSD card.
+
+
+## Final siren + real AFL ladder (2026 update)
+
+**FULL TIME:** When Squiggle's SSE `complete` event changes a previously
+live game to 100% complete, the Pi flashes FULL TIME with the winning team's
+mandatory crest and winning margin for ~3.2 seconds; tied games show DRAW.
+It will not celebrate historical matches on startup or replayed events.
+Afterwards the normal scoreboard and GOAL animation continue as before.
+
+**Actual standings:** Squiggle `q=standings;year=YYYY` is used, not the
+model-prediction `q=ladder` endpoint. Standings are cached for one hour, with
+an explicit warning when stale cached data is used after network failure.
+Each 64x32 page displays two clubs with their mandatory 16px logos, rank,
+premiership points (P), wins (W) and percentage. Nine pages cover all 18
+clubs when data is available. Missing or preseason rankings are not invented.
+
+Try both visual upgrades without contacting Squiggle (all scores and ranks
+in this test are SIMULATED, and clearly announced):
+
+```sh
+git -C ~/afl-led-scoreboard pull --ff-only && afl --demo-upgrades --brightness 10
+```
+
+Normal matches and one ladder page every three match screens:
+
+```sh
+afl --brightness 10 --rotate-seconds 10 --ladder-every 3
+```
+
+Ladder only, cycling through all 18 ranked clubs:
+
+```sh
+afl --ladder-only --brightness 10 --rotate-seconds 5
+```
+
+The ladder mode is optional; without it, existing scoreboard rotation
+continues unchanged. Squiggle contact credentials and real GPIO are only
+required for live operation, not the simulated `--demo-upgrades`.
