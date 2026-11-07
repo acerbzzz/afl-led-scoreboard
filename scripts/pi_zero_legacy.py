@@ -942,9 +942,9 @@ def main(argv=None):
     parser.add_argument('--demo-upgrades', action='store_true',
                         help='Offline final-siren plus ladder demo, using simulated data')
     parser.add_argument('--ladder-only', action='store_true',
-                        help='Rotate through all real AFL ladder positions')
-    parser.add_argument('--ladder-every', type=int, default=0,
-                        help='Show the next ladder page every N match screens; 0 disables')
+                        help='Show all 18 real AFL ladder positions on one screen')
+    parser.add_argument('--ladder-every', type=int, default=3,
+                        help='Show full 18-team ladder after N match screens; 0 disables')
     parser.add_argument('--demo-goal', action='store_true',
                         help='Show an offline goal animation without live scores')
     parser.add_argument('--no-goal-animation', action='store_true',
@@ -954,6 +954,8 @@ def main(argv=None):
     parser.add_argument('--email', help='Squiggle identification email (not saved in Git)')
     parser.add_argument('--year', type=int, default=datetime.utcnow().year)
     parser.add_argument('--favorite', default=None, help='e.g. FRE')
+    parser.add_argument('--fixtures-year', type=int, default=None,
+                        help='Extra season to check for published future AFL fixtures')
     parser.add_argument('--rotate-seconds', type=int, default=15)
     parser.add_argument('--brightness', type=int, default=25)
     parser.add_argument('--slowdown', type=int, default=2)
@@ -963,6 +965,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not 2000 <= args.year <= 2100:
         parser.error('Invalid AFL season year')
+    if args.fixtures_year is not None and not 2000 <= args.fixtures_year <= 2100:
+        parser.error('Invalid upcoming fixtures season')
     if args.ladder_every < 0 or args.ladder_every > 99:
         parser.error('Use --ladder-every 0..99')
     if args.rotate_seconds < 5 or not 1 <= args.brightness <= 100:
@@ -994,6 +998,11 @@ def main(argv=None):
                     ladder = draw_ladder_frame(demo_standings(), 0)
                     ladder.resize((640, 320), Image.NEAREST).save(
                         os.path.join(BASE, 'pi_zero_ladder_preview.png'))
+                    fixture = dict(demo, complete=0, round=1,
+                                   date='2027-03-12 19:30:00')
+                    schedule = draw_fixture_frame(fixture)
+                    schedule.resize((640, 320), Image.NEAREST).save(
+                        os.path.join(BASE, 'pi_zero_fixture_preview.png'))
                     print('Wrote simulated final and ladder previews (no live data)')
                 else:
                     print('Wrote pi_zero_preview.png; demo scores only')
@@ -1008,11 +1017,14 @@ def main(argv=None):
                 rows = demo_standings()
                 matrix.SetImage(draw_ladder_intro(demo=True))
                 time.sleep(1.5)
-                for page in range(2):
-                    matrix.SetImage(draw_ladder_frame(rows, page))
-                    time.sleep(4)
-                matrix.SetImage(frame)
-                time.sleep(3)
+                matrix.SetImage(draw_ladder_frame(rows))
+                time.sleep(5)
+                upcoming = dict(demo, complete=0, round=1,
+                                date='2027-03-12 19:30:00')
+                matrix.SetImage(draw_fixture_frame(upcoming))
+                time.sleep(5)
+                matrix.SetImage(draw_game(finished))
+                time.sleep(5)
                 matrix.Clear()
             elif args.demo_goal:
                 matrix.SetImage(frame)
@@ -1036,7 +1048,7 @@ def main(argv=None):
         state = {}
         standings = []
         last_standings_fetch = 0
-        ladder_page = 0
+        last_future_fetch = 0
         worker = None
         last_fetch = 0
         turn = 0
@@ -1066,6 +1078,30 @@ def main(argv=None):
                     if args.once and not state:
                         return 1
                 last_fetch = time.time()
+            # During the offseason, seek the next season's announced fixture
+            # without manufacturing games when it hasn't been released.
+            fixture_year = (args.fixtures_year if args.fixtures_year is not None
+                            else args.year + 1 if args.year == datetime.utcnow().year
+                            else None)
+            if (not args.ladder_only and fixture_year is not None
+                    and fixture_year <= 2100
+                    and time.time() - last_future_fetch >= 30 * 60):
+                with lock:
+                    has_future = bool(upcoming_games(list(state.values()),
+                                                    args.favorite))
+                if not has_future:
+                    try:
+                        future_fixtures = get_season(fixture_year, headers)
+                        with lock:
+                            for match in future_fixtures:
+                                ident = num(match.get('id'))
+                                if (ident is not None and
+                                        num(match.get('complete')) in (None, 0)):
+                                    state[ident] = match
+                    except Exception as exc:
+                        print('Next AFL fixture not yet available: %s' % exc,
+                              file=sys.stderr)
+                last_future_fetch = time.time()
             with lock:
                 next_goal = alerts.popleft() if alerts else None
             if next_goal is not None:
@@ -1074,22 +1110,37 @@ def main(argv=None):
                         next_goal['code'], next_goal['game_id']))
                     if not args.preview:
                         show_final_animation(matrix, next_goal, stop)
+                        with lock:
+                            finished = state.get(next_goal['game_id'])
+                            final_frame = draw_game(dict(finished)) if finished else None
+                        if final_frame is not None:
+                            matrix.SetImage(final_frame)
+                            stop.wait(5)
                 else:
                     print('GOAL: %s (game %s)' % (
                         next_goal['code'], next_goal['game_id']))
                     if not args.preview:
                         show_goal_animation(matrix, next_goal, stop)
             with lock:
-                pool = games_ranked(list(state.values()), args.favorite)
-                chosen = dict(pool[turn % min(6, len(pool))]) if pool else None
-            show_ladder = args.ladder_only or (args.ladder_every > 0
-                             and turn > 0 and turn % (args.ladder_every + 1)
-                             == args.ladder_every)
+                schedule = rotation_schedule(list(state.values()), args.favorite)
+            show_ladder = args.ladder_only or (
+                args.ladder_every > 0 and (
+                    not schedule or (turn > 0 and
+                    turn % (args.ladder_every + 1) == args.ladder_every)))
+            match_turn = turn - (turn // (args.ladder_every + 1)
+                                 if args.ladder_every > 0 else 0)
+            kind, chosen = (schedule[match_turn % len(schedule)]
+                            if schedule and not args.ladder_only
+                            else (None, None))
+            chosen = dict(chosen) if chosen is not None else None
             if show_ladder:
-                frame = draw_ladder_frame(standings, ladder_page)
-                print('AFL LADDER page %s, season %s' %
-                      (ladder_page + 1, args.year))
-                ladder_page += 1
+                frame = draw_ladder_frame(standings)
+                print('AFL FULL LADDER: 18 clubs, season %s' % args.year)
+            elif kind == 'fixture':
+                frame = draw_fixture_frame(chosen)
+                print('AFL UPCOMING: %s vs %s, %s' % (
+                    chosen.get('hteam'), chosen.get('ateam'),
+                    chosen.get('date')))
             else:
                 frame = draw_game(chosen)
             if args.preview:
@@ -1097,7 +1148,7 @@ def main(argv=None):
                 frame.resize((640, 320), Image.NEAREST).save(os.path.join(BASE, 'pi_zero_preview.png'))
             else:
                 matrix.SetImage(frame)
-            if not show_ladder:
+            if not show_ladder and kind != 'fixture':
                 print('AFL %s: %s vs %s' % (
                     status(chosen) if chosen else 'NONE',
                     chosen.get('hteam') if chosen else '-',
