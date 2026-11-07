@@ -82,6 +82,29 @@ class LegacyTests(unittest.TestCase):
         afl.big_score(ImageDraw.Draw(image), 64, 4, '--', 'white')
         self.assertIsNotNone(image.crop((52, 4, 64, 11)).getbbox())
 
+    def test_opaque_logo_background_removed_but_details_kept(self):
+        from PIL import Image
+        pale = Image.new('RGBA', (12, 12), (247, 247, 247, 255))
+        for x in range(3, 9):
+            for y in range(3, 9):
+                pale.putpixel((x, y), (22, 12, 67, 255))
+        # A white emblem enclosed inside the dark crest must remain visible.
+        pale.putpixel((5, 5), (255, 255, 255, 255))
+        fixed = afl.remove_light_logo_background(pale)
+        self.assertEqual(fixed.getpixel((0, 0))[3], 0)
+        self.assertEqual(fixed.getpixel((11, 11))[3], 0)
+        self.assertEqual(fixed.getpixel((5, 5)), (255, 255, 255, 255))
+        self.assertEqual(fixed.getpixel((4, 4))[3], 255)
+
+    def test_real_fremantle_logo_no_longer_has_solid_white_corners(self):
+        from PIL import Image
+        crest = afl.logo(Image, 'Fremantle', 16, str(HERE / 'logos'))
+        self.assertEqual(crest.size, (16, 16))
+        self.assertEqual(crest.getpixel((0, 0))[3], 0)
+        self.assertEqual(crest.getpixel((15, 15))[3], 0)
+        self.assertTrue(any(crest.getpixel((x, y))[3] >= 200
+                            for x in range(3, 13) for y in range(3, 13)))
+
     def test_rotation(self):
         base = afl.demo_game()
         older = dict(base, id=1, complete=100, date='2026-09-21 18:00:00')

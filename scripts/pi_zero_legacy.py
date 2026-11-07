@@ -181,6 +181,54 @@ def pixel_text(draw, x, y, text, color):
         x += 4
 
 
+def remove_light_logo_background(image):
+    """Remove only light outer backdrop pixels, not white details inside crests.
+
+    Some bundled club images are RGBA PNG files with fully opaque, pale-grey
+    backgrounds despite their .bmp extension. On an LED panel those become
+    glaring white rectangles. Flood filling from the edges avoids erasing
+    white text and features enclosed inside each club crest.
+    """
+    from collections import deque
+    rgba = image.convert('RGBA')
+    px = rgba.load()
+    width, height = rgba.size
+
+    def light_background(x, y):
+        r, g, b, alpha = px[x, y]
+        return alpha > 0 and min(r, g, b) >= 210 and max(r, g, b) - min(r, g, b) <= 36
+
+    pending = deque()
+    seen = set()
+
+    def add(x, y):
+        if (x, y) not in seen and light_background(x, y):
+            seen.add((x, y))
+            pending.append((x, y))
+
+    for x in range(width):
+        add(x, 0)
+        add(x, height - 1)
+    for y in range(height):
+        add(0, y)
+        add(width - 1, y)
+
+    while pending:
+        x, y = pending.popleft()
+        r, g, b, _ = px[x, y]
+        px[x, y] = (r, g, b, 0)
+        if x > 0:
+            add(x - 1, y)
+        if x + 1 < width:
+            add(x + 1, y)
+        if y > 0:
+            add(x, y - 1)
+        if y + 1 < height:
+            add(x, y + 1)
+
+    return rgba
+
+
 def logo(image_class, name, size=16, directory=None):
     path = os.path.join(directory or os.path.join(BASE, 'logos'), name + '.bmp')
     if not os.path.isfile(path):
@@ -188,7 +236,7 @@ def logo(image_class, name, size=16, directory=None):
     with image_class.open(path) as original:
         if original.size[0] < 12 or original.size[1] < 12:
             raise IOError('Club logo too small: %s' % path)
-        alpha = original.convert('RGBA')
+        alpha = remove_light_logo_background(original)
         quality = getattr(image_class, 'LANCZOS', getattr(image_class, 'ANTIALIAS', 1))
         alpha.thumbnail((size, size), quality)
         output = image_class.new('RGBA', (size, size), (0, 0, 0, 0))
