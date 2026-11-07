@@ -204,6 +204,47 @@ class LegacyTests(unittest.TestCase):
              mock.patch.object(afl, 'urlopen', side_effect=AssertionError('No network')):
             self.assertEqual(afl.main(['--demo', '--preview']), 0)
 
+    def test_cache_location_is_private_and_not_inside_pi_project(self):
+        """RGBMatrix may drop from root to daemon; its cache must remain writable."""
+        import stat
+        with tempfile.TemporaryDirectory() as scratch:
+            with mock.patch.object(afl.tempfile, 'gettempdir', return_value=scratch):
+                path = afl.cache_path(2026)
+                folder = os.path.dirname(path)
+                self.assertTrue(folder.startswith(scratch + os.sep))
+                self.assertNotIn('/afl-led-scoreboard/.cache', path)
+                self.assertEqual(os.stat(folder).st_uid, os.geteuid())
+                self.assertEqual(stat.S_IMODE(os.stat(folder).st_mode), 0o700)
+                with open(path, 'w') as stream:
+                    stream.write('[]')
+                self.assertEqual(afl.cache_path(2026), path)
+
+    def test_cache_rejects_symlink_in_shared_tmp_directory(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            rogue = os.path.join(scratch, 'other')
+            os.mkdir(rogue)
+            name = os.path.join(scratch, 'afl-led-scoreboard-cache-%s' % os.geteuid())
+            os.symlink(rogue, name)
+            with mock.patch.object(afl.tempfile, 'gettempdir', return_value=scratch):
+                with self.assertRaises(IOError):
+                    afl.cache_path(2026)
+
+    def test_fetched_season_is_cached_without_project_writes(self):
+        class Response(object):
+            def read(self):
+                return b'{"games":[{"id":1,"hteam":"Fremantle","ateam":"West Coast"}]}'
+            def close(self):
+                pass
+        with tempfile.TemporaryDirectory() as scratch:
+            with mock.patch.object(afl.tempfile, 'gettempdir', return_value=scratch):
+                with mock.patch.object(afl, 'urlopen', return_value=Response()) as fetch:
+                    games = afl.get_season(2026, {'User-Agent':'test'})
+                self.assertEqual(games[0]['id'], 1)
+                with mock.patch.object(afl, 'urlopen', side_effect=AssertionError(
+                        'Fresh cache should avoid network')):
+                    self.assertEqual(afl.get_season(2026, {'User-Agent':'test'}), games)
+                self.assertEqual(fetch.call_count, 1)
+
     def test_contact_required(self):
         with self.assertRaises(ValueError):
             afl.contact('')

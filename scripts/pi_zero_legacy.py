@@ -8,10 +8,13 @@ Python-3.10-only desktop app. Logo assets must be present; never show impostors.
 from __future__ import print_function
 
 import argparse
+import errno
 import json
 import os
 import re
+import stat
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -418,9 +421,26 @@ def read_email(explicit=None):
 
 
 def cache_path(year):
-    directory = os.path.join(BASE, '.cache')
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
+    """Use a private writable cache even after RGBMatrix drops privileges.
+
+    The Pi driver starts with root permissions, but later runs as a restricted
+    account. The Git checkout belongs to 'pi', so writing BASE/.cache fails.
+    A UID-specific directory in the system temp area avoids chmod/chown on
+    project files and preserves stale-cache fallback during normal operation.
+    """
+    uid = os.geteuid()
+    directory = os.path.join(tempfile.gettempdir(),
+                             'afl-led-scoreboard-cache-%s' % uid)
+    try:
+        os.makedirs(directory, 0o700)
+    except OSError as exc:
+        if exc.errno != errno.EEXIST:
+            raise
+    # Do not follow a hostile /tmp symlink or share other users' files.
+    info = os.lstat(directory)
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or
+            stat.S_IMODE(info.st_mode) & 0o077):
+        raise IOError('AFL cache directory must be private to the running user')
     return os.path.join(directory, 'pi_zero_games_%s.json' % year)
 
 
