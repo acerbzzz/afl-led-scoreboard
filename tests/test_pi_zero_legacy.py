@@ -344,10 +344,59 @@ class LegacyTests(unittest.TestCase):
         with Image.open(HERE / 'pi_zero_preview.png') as frame:
             self.assertEqual(frame.size, (640, 320))
         for filename in ('pi_zero_final_preview.png',
-                         'pi_zero_ladder_preview.png'):
+                         'pi_zero_ladder_preview.png',
+                         'pi_zero_fixture_preview.png'):
             with Image.open(HERE / filename) as frame:
                 self.assertEqual(frame.size, (640, 320))
                 self.assertTrue(frame.getbbox())
+
+    def test_all_18_teams_ladder_on_one_64x32_screen(self):
+        rows = afl.demo_standings()
+        self.assertEqual(len(rows), 18)
+        self.assertEqual([r['rank'] for r in rows], list(range(1, 19)))
+        frame = afl.draw_ladder_frame(rows)
+        self.assertEqual(frame.size, (64, 32))
+        for col in range(3):
+            for row in range(6):
+                x, y = 21 * col, 5 * row
+                self.assertTrue(frame.crop((x, y, x + 20, y + 5)).getbbox())
+        self.assertEqual(frame.tobytes(),
+                         afl.draw_ladder_frame(rows, 8).tobytes())
+        self.assertNotEqual(frame.tobytes(),
+                            afl.draw_ladder_frame(rows[:17]).tobytes())
+
+    def test_upcoming_fixture_shows_logo_date_time_and_round(self):
+        match = {'hteam': 'Fremantle', 'ateam': 'West Coast', 'round': 1,
+                 'complete': 0, 'date': '2027-03-12 19:30:00'}
+        self.assertEqual(afl.fixture_date_time(match), ('12/03', '19:30'))
+        self.assertEqual(afl.draw_fixture_frame(match).size, (64, 32))
+        self.assertNotEqual(afl.draw_fixture_frame(match).tobytes(),
+                            afl.draw_game(match).tobytes())
+        self.assertEqual(afl.fixture_date_time(dict(
+            match, date='2027-03-12T09:30:00Z', tz='+10:00')),
+            ('12/03', '19:30'))
+        self.assertEqual(afl.fixture_date_time(dict(
+            match, date='2027-03-12T09:30:00Z', tz=None)),
+            ('--/--', '--:--'))
+
+    def test_finals_always_rotate_along_with_next_nine_fixtures(self):
+        now = datetime(2026, 11, 6)
+        original = afl.demo_game()
+        final = dict(original, id=100, complete=100,
+                     date='2026-09-26 14:30:00')
+        upcoming = [dict(original, id=i, complete=0,
+                          date='2027-03-%02d 19:30:00' % i)
+                    for i in range(1, 10)]
+        schedule = afl.rotation_schedule([final] + upcoming, now=now)
+        kinds = [kind for kind, _ in schedule]
+        self.assertEqual(kinds[0:2], ['fixture', 'final'])
+        self.assertEqual(kinds.count('fixture'), 9)
+        self.assertEqual(kinds.count('final'), 1)
+        self.assertEqual([kind for kind, _ in
+                          afl.rotation_schedule([final], now=now)], ['final'])
+        self.assertEqual([kind for kind, _ in
+                          afl.rotation_schedule([dict(final, complete=30)],
+                                                now=now)], ['live'])
 
     def test_rotation(self):
         base = afl.demo_game()

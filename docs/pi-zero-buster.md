@@ -134,3 +134,42 @@ afl --ladder-only --brightness 10 --rotate-seconds 5
 The ladder mode is optional; without it, existing scoreboard rotation
 continues unchanged. Squiggle contact credentials and real GPIO are only
 required for live operation, not the simulated `--demo-upgrades`.
+
+
+## All 18 clubs on one ladder screen and upcoming matches
+
+The 64x32 ladder now displays **all 18 AFL teams simultaneously**, as
+three columns of six rows with their two-digit rank and coloured three-letter
+club abbreviation. All standings come from Squiggle `q=standings`; if
+the provider hasn't published a complete 18-team ladder, the screen
+says LADDER WAIT rather than inventing placements. There is not enough
+room for 18 full crests on the same 64x32 panel; **real club logos remain
+mandatory on every final score, live match, goal animation and fixture**.
+
+Completed final scores are kept in the automatic rotation alongside upcoming
+fixtures. A final-siren celebration leaves the final scores visible briefly
+before continuing. Each upcoming fixture shows both team logos, round,
+home/away designations, date and local kickoff time; it never displays
+made-up scores. The Pi checks the next season's Squiggle fixture when
+the current season has no upcoming matches. If the provider has not
+published that season, it cannot display unannounced games.
+
+The normal AFL command now inserts a complete ladder screen after
+three match or fixture screens:
+
+```sh
+afl --brightness 10 --rotate-seconds 10
+```
+
+Use `--ladder-only` for the single full ladder; `--ladder-every 0`
+for match/fixture rotation without the ladder; `--fixtures-year 2027`
+to specify an additional future season.
+
+The offline visual test now displays a simulated final-siren celebration,
+all 18 ladder entries, a published-style future fixture screen, and the
+final score. Its standings/fixture are deliberately fictional and never
+used for real games:
+
+```sh
+git -C ~/afl-led-scoreboard pull --ff-only && afl --demo-upgrades --brightness 10
+```
