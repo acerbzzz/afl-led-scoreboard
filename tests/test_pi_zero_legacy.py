@@ -184,7 +184,7 @@ class LegacyTests(unittest.TestCase):
         self.assertFalse(afl.update_live_state(state, 'score', payload, pending, 'GEE'))
         self.assertFalse(pending)
 
-    def test_no_animation_for_behind_snapshot_points_only_or_final(self):
+    def test_no_goal_animation_for_behind_snapshot_or_points_only(self):
         from collections import deque
         base = dict(afl.demo_game(), id=31, complete=48)
         cases = [
@@ -196,9 +196,6 @@ class LegacyTests(unittest.TestCase):
                        'score': {'hscore': 86}}),
             ('score', {'gameid': 31, 'type': 'goal', 'side': 'hteam',
                        'team': 17, 'score': {'hgoals': 13, 'hscore': 86}}),
-            ('score', {'gameid': 31, 'type': 'goal', 'side': 'hteam',
-                       'complete': 100,
-                       'score': {'hgoals': 13, 'hscore': 86}}),
             ('game', dict(base, hgoals=13, hscore=86)),
         ]
         for ev_type, payload in cases:
@@ -206,6 +203,13 @@ class LegacyTests(unittest.TestCase):
             self.assertFalse(afl.update_live_state(state, ev_type, payload,
                                                   alerts))
             self.assertFalse(alerts)
+        # Reaching complete=100 is now a FINAL SIREN, not a goal alert.
+        state, alerts = {31: dict(base)}, deque()
+        full_time = {'gameid': 31, 'type': 'goal', 'side': 'hteam',
+                     'complete': 100, 'score': {'hgoals': 13, 'hscore': 86}}
+        self.assertTrue(afl.update_live_state(state, 'score', full_time, alerts))
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]['kind'], 'final')
         # With no baseline, even a 'goal' event is not a trustworthy new goal.
         state, alerts = {}, deque()
         self.assertFalse(afl.update_live_state(state, 'score',
