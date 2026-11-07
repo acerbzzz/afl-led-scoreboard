@@ -111,3 +111,6 @@ These come from ESPN's publicly accessible AFL logo image CDN, not from Squiggle
 **Trademark note:** These external AFL club crests belong to their respective owners. `logos_hd/` is deliberately gitignored and is not covered by the project GPL; do not commit/repackage or use commercially without checking the rights holders' terms. If the ESPN URL is blocked or changes, no logo is silently substituted.
 
 Demo mode is prominently marked **DEMO** and **SAMPLE DATA**, including in the tiny LED frame. This prevents its illustrative scores from being mistaken for live Squiggle results.
+## Original Raspberry Pi Zero W (Raspbian Buster)
+
+See [Pi Zero Buster setup and calibration](docs/pi-zero-buster.md) for the optional Python 2.7 adapter. It uses the existing RGB matrix bindings, all 18 required club logos, and real Squiggle data. **Calibrate scrambled LED rows before enabling automatic operation.**
