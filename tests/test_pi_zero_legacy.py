@@ -47,6 +47,41 @@ class LegacyTests(unittest.TestCase):
                 afl.draw_game(afl.demo_game(), temp)
         self.assertEqual(afl.draw_game(None).size, (64, 32))
 
+    def test_16px_crests_fill_the_two_16px_rows(self):
+        """A 16x16 crest belongs to each team and must not overlap scores."""
+        from PIL import Image
+        home = (185, 5, 160)
+        away = (230, 170, 30)
+        seen = []
+
+        def fake_logo(cls, name, size, directory=None):
+            seen.append((name, size))
+            return Image.new('RGBA', (size, size),
+                             (home if name == 'Fremantle' else away) + (255,))
+
+        with mock.patch.object(afl, 'logo', side_effect=fake_logo):
+            frame = afl.draw_game(afl.demo_game())
+        self.assertEqual(frame.size, (64, 32))
+        self.assertEqual(seen, [('Fremantle', 16), ('West Coast', 16)])
+        self.assertEqual(frame.getpixel((8, 15)), home)
+        self.assertEqual(frame.getpixel((8, 16)), away)
+        self.assertEqual(frame.getpixel((8, 31)), away)
+        # Team labels, goals.behinds and big total points all produce pixels.
+        self.assertNotEqual(frame.getpixel((18, 2)), (0, 0, 0))
+        self.assertNotEqual(frame.crop((18, 8, 42, 15)).getbbox(), None)
+        self.assertNotEqual(frame.crop((46, 8, 64, 15)).getbbox(), None)
+
+    def test_big_point_totals_are_right_aligned_and_bounded(self):
+        from PIL import Image, ImageDraw
+        image = Image.new('RGB', (64, 32))
+        d = ImageDraw.Draw(image)
+        afl.big_score(d, 64, 4, '120', 'white')
+        self.assertIsNotNone(image.crop((46, 4, 64, 11)).getbbox())
+        self.assertIsNone(image.crop((0, 4, 46, 11)).getbbox())
+        image = Image.new('RGB', (64, 32))
+        afl.big_score(ImageDraw.Draw(image), 64, 4, '--', 'white')
+        self.assertIsNotNone(image.crop((52, 4, 64, 11)).getbbox())
+
     def test_rotation(self):
         base = afl.demo_game()
         older = dict(base, id=1, complete=100, date='2026-09-21 18:00:00')

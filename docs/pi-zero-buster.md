@@ -24,10 +24,10 @@ sh ~/afl-led-scoreboard/scripts/install_pi_zero.sh
 
 The installer asks for a real Squiggle contact email. It stores it locally in `/etc/afl-led-scoreboard-contact` (root-only permissions), never commits it to Git, and creates `/usr/local/bin/afl`. It refuses to replace an existing `afl` command. This does not overwrite the old NFL scoreboard folder.
 
-First, run a short, **offline demo**, clearly labelled DEMO and lasting 20 seconds:
+First, run a short, **offline demo**, clearly labelled DEMO and lasting 20 seconds. The native 64×32 layout now gives each team an entire 16-pixel-high row: **a mandatory 16×16 crest**, its abbreviation, goals.behinds and a larger 5×7 total score. This trades the old full-width match header for bigger, more recognisable crests:
 
 ```sh
-afl --demo
+afl --demo --brightness 10
 ```
 
 If your C++ demo proved that multiplexing 1 works, test the analogous Python parameter:

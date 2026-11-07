@@ -181,7 +181,7 @@ def pixel_text(draw, x, y, text, color):
         x += 4
 
 
-def logo(image_class, name, size=12, directory=None):
+def logo(image_class, name, size=16, directory=None):
     path = os.path.join(directory or os.path.join(BASE, 'logos'), name + '.bmp')
     if not os.path.isfile(path):
         raise IOError('MANDATORY club logo missing: %s' % path)
@@ -197,6 +197,36 @@ def logo(image_class, name, size=12, directory=None):
         return output
 
 
+# A 64x32 panel can accommodate exactly two 16px-tall crests. Give each
+# team half the height, with its abbreviation/status above its AFL score.
+# All text is drawn at native pixel resolution (never scaled/blurred).
+BIG_NUMBERS = {
+    '0': ('01110', '10001', '10011', '10101', '11001', '10001', '01110'),
+    '1': ('00100', '01100', '00100', '00100', '00100', '00100', '01110'),
+    '2': ('01110', '10001', '00001', '00010', '00100', '01000', '11111'),
+    '3': ('11110', '00001', '00001', '01110', '00001', '00001', '11110'),
+    '4': ('00010', '00110', '01010', '10010', '11111', '00010', '00010'),
+    '5': ('11111', '10000', '10000', '11110', '00001', '00001', '11110'),
+    '6': ('01110', '10000', '10000', '11110', '10001', '10001', '01110'),
+    '7': ('11111', '00001', '00010', '00100', '01000', '01000', '01000'),
+    '8': ('01110', '10001', '10001', '01110', '10001', '10001', '01110'),
+    '9': ('01110', '10001', '10001', '01111', '00001', '00001', '01110'),
+    '-': ('00000', '00000', '00000', '11111', '00000', '00000', '00000'),
+}
+
+
+def big_score(draw, right, y, text, color):
+    """Right-justify the points total using 5x7 digits, never beyond x=63."""
+    text = str(text)[:3]
+    start = right - len(text) * 6
+    for offset, char in enumerate(text):
+        bitmap = BIG_NUMBERS.get(char, BIG_NUMBERS['-'])
+        for dy, row in enumerate(bitmap):
+            for dx, value in enumerate(row):
+                if value == '1':
+                    draw.point((start + offset * 6 + dx, y + dy), fill=color)
+
+
 def draw_game(game, logo_dir=None):
     from PIL import Image, ImageDraw
     frame = Image.new('RGB', (64, 32), (0, 0, 0))
@@ -204,19 +234,27 @@ def draw_game(game, logo_dir=None):
     if not game:
         pixel_text(d, 6, 13, 'NO AFL GAMES', '#FFFFFF')
         return frame
-    label = 'R%s' % str(game.get('round', '-'))[:2]
-    pixel_text(d, 0, 0, label, '#54D0FF')
-    pixel_text(d, 18, 0, status(game), '#43E9CF' if game.get('_demo') else '#FFDD66')
-    d.line((0, 6, 63, 6), fill='#263443')
-    for y, key, side in ((7, 'hteam', 'h'), (20, 'ateam', 'a')):
+
+    # Each row is 16 pixels high. Crest occupies x=0..15, and everything
+    # else starts after the colored separator at x=16.
+    for y, key, side in ((0, 'hteam', 'h'), (16, 'ateam', 'a')):
         team = club(game.get(key))
-        crest = logo(Image, team[2], 12, logo_dir)
+        crest = logo(Image, team[2], 16, logo_dir)
         frame.paste(crest, (0, y), crest)
-        pixel_text(d, 13, y + 3, team[1], team[3])
-        gb, total = score(game, side)
-        pixel_text(d, 27, y + 3, gb[:5], '#DDDDDD')
-        total = total[:3]
-        pixel_text(d, 64 - len(total) * 4, y + 3, total, '#FFFFFF')
+        d.line((16, y + 1, 16, y + 14), fill=team[3])
+        pixel_text(d, 18, y + 2, team[1], team[3])
+        if y == 0:
+            match_state = status(game)[:7]
+            state_color = '#31C8E8' if game.get('_demo') else '#FFD34D'
+            pixel_text(d, 34, y + 2, match_state, state_color)
+        else:
+            pixel_text(d, 34, y + 2,
+                       ('R%s' % str(game.get('round', '-'))[:2])[:7], '#54D0FF')
+        goals_behinds, points = score(game, side)
+        # Leave a space between the 3x5 goals.behinds and large 5x7 points.
+        pixel_text(d, 18, y + 9, goals_behinds[:6], '#BDCBDC')
+        big_score(d, 64, y + 8, points, '#FFFFFF')
+    d.line((17, 15, 63, 15), fill='#27303C')
     return frame
 
 
@@ -230,7 +268,7 @@ def demo_game():
 def verify_logos(directory=None):
     for team in TEAM_LIST:
         from PIL import Image
-        logo(Image, team[2], 12, directory)
+        logo(Image, team[2], 16, directory)
     return 18
 
 
