@@ -344,7 +344,8 @@ class LegacyTests(unittest.TestCase):
                                side_effect=AssertionError('Demo must be offline')):
             self.assertEqual(afl.main(['--demo-final','--brightness','10']), 0)
         self.assertEqual(seen[-1], 'CLEAR')
-        last_frame = seen[-2]
+        last_frame = next(frame for frame in reversed(seen)
+                          if hasattr(frame, 'tobytes'))
         demo = dict(afl.demo_game(), complete=100)
         demo.pop('_demo', None)
         self.assertEqual(last_frame.tobytes(), afl.draw_game(demo).tobytes())
