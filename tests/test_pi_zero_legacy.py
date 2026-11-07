@@ -130,6 +130,29 @@ class LegacyTests(unittest.TestCase):
             self.assertEqual(icon.size, (16,16))
             self.assertTrue(icon.getbbox(), team[2])
 
+    def test_fremantle_shield_fill_darkened_anchor_remains_legible(self):
+        from PIL import Image, ImageDraw
+        art = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(art)
+        draw.rectangle((3, 2, 12, 13), fill=(65, 15, 135, 255))
+        draw.line((7, 4, 7, 11), fill=(195, 195, 195, 255))
+        draw.line((5, 10, 9, 10), fill=(195, 195, 195, 255))
+        reduced = afl.outline_fremantle_shield(art)
+        self.assertLess(max(reduced.getpixel((5, 7))[:3]), 50)
+        self.assertGreater(reduced.getpixel((3, 7))[2],
+                           reduced.getpixel((5, 7))[2] * 3)
+        self.assertGreater(reduced.getpixel((7, 6))[0], 195)
+        self.assertEqual(reduced.getpixel((0, 0))[3], 0)
+        self.assertEqual(reduced.getpixel((5, 7))[3], 255)
+
+    def test_fremantle_real_asset_has_a_readable_anchor(self):
+        from PIL import Image
+        badge = afl.logo(Image, 'Fremantle', 16, str(HERE / 'logos'))
+        self.assertEqual(badge.size, (16, 16))
+        self.assertTrue(badge.getbbox())
+        self.assertTrue(any(r >= 125 and g >= 125 and b >= 125 and a > 100
+                            for r, g, b, a in badge.getdata()))
+
     def test_rotation(self):
         base = afl.demo_game()
         older = dict(base, id=1, complete=100, date='2026-09-21 18:00:00')

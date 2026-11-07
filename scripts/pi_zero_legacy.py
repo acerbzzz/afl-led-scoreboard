@@ -269,6 +269,47 @@ def compact_logo_art(image_class, original, size):
     return output
 
 
+def outline_fremantle_shield(image):
+    """Preserve the original anchor crest while dimming the large purple fill.
+
+    On a 16px HUB75 panel a fully bright purple shield reads as a rectangle.
+    Reduce only interior purple pixels, retain the outer outline, and gently
+    lift the near-white anchor strokes. Other club emblems are unchanged.
+    """
+    source = image.convert('RGBA')
+    original = source.copy().load()
+    px = source.load()
+    width, height = source.size
+    for y in range(height):
+        for x in range(width):
+            r, g, b, a = original[x, y]
+            if a < 110:
+                continue
+            purple = b > max(65, r * 1.3) and b > g * 1.5 and g < 105
+            if purple:
+                boundary = (x == 0 or y == 0 or x == width - 1 or
+                            y == height - 1)
+                if not boundary:
+                    for nx, ny in ((x-1, y), (x+1, y),
+                                   (x, y-1), (x, y+1)):
+                        if original[nx, ny][3] < 110:
+                            boundary = True
+                            break
+                if boundary:
+                    px[x, y] = (min(130, max(78, int(r * 1.5))),
+                                min(55, int(g * 1.5)),
+                                min(185, int(b * 1.4)), a)
+                else:
+                    px[x, y] = (max(7, int(r * 0.25)),
+                                max(1, int(g * 0.20)),
+                                max(18, int(b * 0.27)), a)
+            elif min(r, g, b) >= 100 and max(r, g, b)-min(r, g, b) < 55:
+                px[x, y] = (min(225, int(r * 1.18)),
+                            min(225, int(g * 1.18)),
+                            min(225, int(b * 1.18)), a)
+    return source
+
+
 def logo(image_class, name, size=16, directory=None):
     path = os.path.join(directory or os.path.join(BASE, 'logos'), name + '.bmp')
     if not os.path.isfile(path):
@@ -276,7 +317,8 @@ def logo(image_class, name, size=16, directory=None):
     with image_class.open(path) as original:
         if original.size[0] < 12 or original.size[1] < 12:
             raise IOError('Club logo too small: %s' % path)
-        return compact_logo_art(image_class, original, size)
+        icon = compact_logo_art(image_class, original, size)
+        return outline_fremantle_shield(icon) if name == 'Fremantle' else icon
 
 
 # A 64x32 panel can accommodate exactly two 16px-tall crests. Give each

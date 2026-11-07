@@ -1,5 +1,7 @@
 # Original Raspberry Pi Zero W (Rev 1.1) — AFL scoreboard
 
+**Fremantle crest adjustment:** On the 16×16 physical display, the purple shield fill can overpower its white anchor. The legacy Pi renderer now reduces only the interior purple and keeps the outer outline/white anchor visible. This is a targeted colour treatment of the original crest; no club logo files or HD previews are replaced.
+
 **Compact LED logo experiment:** Pi Zero icons now use the main emblem from each bundled 32×32 logo, discarding the tiny printed wordmark before resizing to 16×16. Pale outside pixels are removed and white highlights reduced. Original files are unchanged. Use `afl --demo --brightness 10` to compare on the physical panel. This cannot add detail beyond 16×16 pixels.
 
 **Logo backdrop fix:** The bundled club images contain opaque pale backgrounds. The legacy Pi renderer now strips only light-coloured pixels connected to each image edge, retaining internal white crest artwork and displaying the surrounding area black. Use a low brightness such as `afl --demo --brightness 10` when evaluating the change.
