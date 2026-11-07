@@ -284,42 +284,6 @@ class LegacyTests(unittest.TestCase):
         self.assertEqual(afl.draw_final_frame(
             afl.final_from_transition(home, draw), 0).size, (64, 32))
 
-    def test_standings_parse_rank_and_real_clubs(self):
-        raw = {'standings': [
-            {'id': 17, 'rank': 18, 'pts': 8, 'wins': 2, 'percentage': 72.3},
-            {'id': 6, 'rank': 1, 'pts': 72, 'wins': 18, 'percentage': 145.2},
-            {'id': 6, 'rank': 3, 'pts': 40, 'wins': 10, 'percentage': 100.0},
-            {'id': 99, 'rank': 2, 'pts': 60, 'wins': 15, 'percentage': 118.0}
-        ]}
-        rows = afl.normalize_standings(raw)
-        self.assertEqual(len(rows), 2)
-        self.assertEqual([row['rank'] for row in rows], [1, 18])
-        self.assertEqual(rows[0]['code'], 'FRE')
-        self.assertEqual(rows[1]['pts'], 8)
-        self.assertEqual(afl.draw_ladder_frame(rows, 0).size, (64, 32))
-        self.assertEqual(afl.draw_ladder_frame(rows, 1).size, (64, 32))
-        self.assertEqual(afl.draw_ladder_frame([], 0).size, (64, 32))
-        with self.assertRaises(ValueError):
-            afl.normalize_standings({'ladder': []})
-
-    def test_real_standings_request_and_cache(self):
-        class Response(object):
-            def read(self):
-                return (b'{"standings":[{"id":6,"rank":1,"pts":64,"wins":16,'
-                        b'"percentage":128.3}]}')
-            def close(self):
-                pass
-        with tempfile.TemporaryDirectory() as temp:
-            with mock.patch.object(afl.tempfile, 'gettempdir', return_value=temp):
-                with mock.patch.object(afl, 'urlopen', return_value=Response()) as call:
-                    rows = afl.get_standings(2026, {'User-Agent':'test@example.org'})
-                    self.assertEqual(rows[0]['team'], 'Fremantle')
-                    self.assertEqual(call.call_args[0][0].get_full_url(),
-                                     'https://api.squiggle.com.au/?q=standings;year=2026')
-                with mock.patch.object(afl, 'urlopen',
-                                       side_effect=AssertionError('No duplicate fetch')):
-                    self.assertEqual(afl.get_standings(2026, {'User-Agent':'test@example.org'}), rows)
-
     def test_goal_opt_out_does_not_disable_final_siren(self):
         from collections import deque
         base = dict(afl.demo_game(), id=75, complete=90)
@@ -335,68 +299,56 @@ class LegacyTests(unittest.TestCase):
                          queue, disable_goals=True))
         self.assertEqual(queue[0]['kind'], 'final')
 
-    def test_offline_upgrades_demo_no_email_or_network(self):
+    def test_offline_final_siren_demo_no_email_or_network(self):
         with mock.patch.object(afl, 'urlopen', side_effect=AssertionError('No network')), \
              mock.patch.object(afl, 'read_email', side_effect=AssertionError('No contact')):
-            self.assertEqual(afl.main(['--demo-upgrades','--preview']), 0)
+            self.assertEqual(afl.main(['--demo-final','--preview']), 0)
         # The physical test exercises real animation; preview must remain 64x32-scaled.
         from PIL import Image
         with Image.open(HERE / 'pi_zero_preview.png') as frame:
             self.assertEqual(frame.size, (640, 320))
-        for filename in ('pi_zero_final_preview.png',
-                         'pi_zero_ladder_preview.png',
-                         'pi_zero_fixture_preview.png'):
+        for filename in ('pi_zero_final_preview.png',):
             with Image.open(HERE / filename) as frame:
                 self.assertEqual(frame.size, (640, 320))
                 self.assertTrue(frame.getbbox())
 
-    def test_all_18_teams_ladder_on_one_64x32_screen(self):
-        rows = afl.demo_standings()
-        self.assertEqual(len(rows), 18)
-        self.assertEqual([r['rank'] for r in rows], list(range(1, 19)))
-        frame = afl.draw_ladder_frame(rows)
-        self.assertEqual(frame.size, (64, 32))
-        for col in range(3):
-            for row in range(6):
-                x, y = 21 * col, 5 * row
-                self.assertTrue(frame.crop((x, y, x + 20, y + 5)).getbbox())
-        self.assertEqual(frame.tobytes(),
-                         afl.draw_ladder_frame(rows, 8).tobytes())
-        self.assertNotEqual(frame.tobytes(),
-                            afl.draw_ladder_frame(rows[:17]).tobytes())
+    def test_removed_ladder_and_fixture_modes(self):
+        """Neither ladder nor future fixtures appear in any live rotation."""
+        current = dict(afl.demo_game(), id=7, complete=35,
+                       date='2026-06-01 18:30:00')
+        future = dict(afl.demo_game(), id=8, complete=0,
+                      date='2027-05-01 19:00:00')
+        finished = dict(afl.demo_game(), id=9, complete=100,
+                        date='2026-09-26 18:30:00')
+        selected = afl.games_ranked([future, finished, current], None)
+        self.assertEqual([item['id'] for item in selected], [7,9])
+        self.assertEqual([item['id'] for item in
+                          afl.games_ranked([future, finished, current], 'FRE')],
+                         [7,9])
+        self.assertEqual(afl.games_ranked([future], None), [])
+        self.assertFalse(hasattr(afl, 'draw_ladder_frame'))
+        self.assertFalse(hasattr(afl, 'draw_fixture_frame'))
+        self.assertFalse(hasattr(afl, 'get_standings'))
 
-    def test_upcoming_fixture_shows_logo_date_time_and_round(self):
-        match = {'hteam': 'Fremantle', 'ateam': 'West Coast', 'round': 1,
-                 'complete': 0, 'date': '2027-03-12 19:30:00'}
-        self.assertEqual(afl.fixture_date_time(match), ('12/03', '19:30'))
-        self.assertEqual(afl.draw_fixture_frame(match).size, (64, 32))
-        self.assertNotEqual(afl.draw_fixture_frame(match).tobytes(),
-                            afl.draw_game(match).tobytes())
-        self.assertEqual(afl.fixture_date_time(dict(
-            match, date='2027-03-12T09:30:00Z', tz='+10:00')),
-            ('12/03', '19:30'))
-        self.assertEqual(afl.fixture_date_time(dict(
-            match, date='2027-03-12T09:30:00Z', tz=None)),
-            ('--/--', '--:--'))
-
-    def test_finals_always_rotate_along_with_next_nine_fixtures(self):
-        now = datetime(2026, 11, 6)
-        original = afl.demo_game()
-        final = dict(original, id=100, complete=100,
-                     date='2026-09-26 14:30:00')
-        upcoming = [dict(original, id=i, complete=0,
-                          date='2027-03-%02d 19:30:00' % i)
-                    for i in range(1, 10)]
-        schedule = afl.rotation_schedule([final] + upcoming, now=now)
-        kinds = [kind for kind, _ in schedule]
-        self.assertEqual(kinds[0:2], ['fixture', 'final'])
-        self.assertEqual(kinds.count('fixture'), 9)
-        self.assertEqual(kinds.count('final'), 1)
-        self.assertEqual([kind for kind, _ in
-                          afl.rotation_schedule([final], now=now)], ['final'])
-        self.assertEqual([kind for kind, _ in
-                          afl.rotation_schedule([dict(final, complete=30)],
-                                                now=now)], ['live'])
+    def test_final_demo_keeps_real_score_layout_and_logo(self):
+        from PIL import Image
+        seen = []
+        class MockPanel(object):
+            def SetImage(self, frame):
+                seen.append(frame.copy())
+            def Clear(self):
+                seen.append('CLEAR')
+        with mock.patch.object(afl, 'create_matrix', return_value=MockPanel()), \
+             mock.patch.object(afl.time, 'sleep', return_value=None), \
+             mock.patch.object(afl, 'urlopen',
+                               side_effect=AssertionError('Demo must be offline')):
+            self.assertEqual(afl.main(['--demo-final','--brightness','10']), 0)
+        self.assertEqual(seen[-1], 'CLEAR')
+        last_frame = seen[-2]
+        demo = dict(afl.demo_game(), complete=100)
+        demo.pop('_demo', None)
+        self.assertEqual(last_frame.tobytes(), afl.draw_game(demo).tobytes())
+        self.assertTrue(last_frame.getbbox())
 
     def test_rotation(self):
         base = afl.demo_game()
@@ -404,7 +356,9 @@ class LegacyTests(unittest.TestCase):
         newest = dict(base, id=2, complete=100, date='2026-09-26 18:00:00')
         upcoming = dict(base, id=3, complete=0, date='2027-05-01 19:00:00')
         live = dict(base, id=4, complete=60, date='2026-06-01 19:00:00')
-        self.assertEqual([g['id'] for g in afl.games_ranked([older,newest,upcoming,live], 'FRE', now=datetime(2026,11,6))], [4,3,2,1])
+        self.assertEqual([g['id'] for g in afl.games_ranked(
+            [older,newest,upcoming,live], 'FRE', now=datetime(2026,11,6))],
+                         [4,2,1])
         self.assertTrue(afl.match_favorite(live, 'FRE'))
         self.assertFalse(afl.match_favorite(live, 'GEE'))
 

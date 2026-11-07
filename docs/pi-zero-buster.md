@@ -97,79 +97,29 @@ Only when the screen is stable, run `sh ~/afl-led-scoreboard/scripts/enable_pi_z
 This adapter is designed for Python 2.7, but its automated tests run on current Python with fake GPIO bindings. The real Pi Zero Python 2 runtime and Squiggle HTTPS connections **need verification on the actual device**. Buster is unsupported and has security limitations. We avoid a risky in-place OS upgrade on the user's only microSD card.
 
 
-## Final siren + real AFL ladder (2026 update)
+## Full-time celebration and final scores
 
-**FULL TIME:** When Squiggle's SSE `complete` event changes a previously
-live game to 100% complete, the Pi flashes FULL TIME with the winning team's
-mandatory crest and winning margin for ~3.2 seconds; tied games show DRAW.
-It will not celebrate historical matches on startup or replayed events.
-Afterwards the normal scoreboard and GOAL animation continue as before.
+When Squiggle's live event feed marks a previously live match 100% complete,
+the Pi flashes **FULL TIME** with the winning club's crest and victory
+margin for ~3 seconds (or DRAW for a tied score). It then holds the completed
+score, with both clubs' existing crests, for five more seconds before
+continuing automatic score rotation.
 
-**Actual standings:** Squiggle `q=standings;year=YYYY` is used, not the
-model-prediction `q=ladder` endpoint. Standings are cached for one hour, with
-an explicit warning when stale cached data is used after network failure.
-Each 64x32 page displays two clubs with their mandatory 16px logos, rank,
-premiership points (P), wins (W) and percentage. Nine pages cover all 18
-clubs when data is available. Missing or preseason rankings are not invented.
+The scoreboard now rotates **live matches and recent final scores only**.
+Ladder standings and upcoming-fixture displays were deliberately removed.
+No additional data sources or fees are required; the existing Squiggle
+score feed and local cache remain unchanged.
 
-Try both visual upgrades without contacting Squiggle (all scores and ranks
-in this test are SIMULATED, and clearly announced):
+For an offline, simulated final-siren test (no network or contact email):
 
 ```sh
-git -C ~/afl-led-scoreboard pull --ff-only && afl --demo-upgrades --brightness 10
+afl --demo-final --brightness 10
 ```
 
-Normal matches and one ladder page every three match screens:
-
-```sh
-afl --brightness 10 --rotate-seconds 10 --ladder-every 3
-```
-
-Ladder only, cycling through all 18 ranked clubs:
-
-```sh
-afl --ladder-only --brightness 10 --rotate-seconds 5
-```
-
-The ladder mode is optional; without it, existing scoreboard rotation
-continues unchanged. Squiggle contact credentials and real GPIO are only
-required for live operation, not the simulated `--demo-upgrades`.
-
-
-## All 18 clubs on one ladder screen and upcoming matches
-
-The 64x32 ladder now displays **all 18 AFL teams simultaneously**, as
-three columns of six rows with their two-digit rank and coloured three-letter
-club abbreviation. All standings come from Squiggle `q=standings`; if
-the provider hasn't published a complete 18-team ladder, the screen
-says LADDER WAIT rather than inventing placements. There is not enough
-room for 18 full crests on the same 64x32 panel; **real club logos remain
-mandatory on every final score, live match, goal animation and fixture**.
-
-Completed final scores are kept in the automatic rotation alongside upcoming
-fixtures. A final-siren celebration leaves the final scores visible briefly
-before continuing. Each upcoming fixture shows both team logos, round,
-home/away designations, date and local kickoff time; it never displays
-made-up scores. The Pi checks the next season's Squiggle fixture when
-the current season has no upcoming matches. If the provider has not
-published that season, it cannot display unannounced games.
-
-The normal AFL command now inserts a complete ladder screen after
-three match or fixture screens:
+The existing `--demo-goal` and `--demo` flags still work, and
+`--demo-upgrades` is accepted as a backwards-compatible alias for
+the final-siren-only demo. For regular scores, use:
 
 ```sh
 afl --brightness 10 --rotate-seconds 10
-```
-
-Use `--ladder-only` for the single full ladder; `--ladder-every 0`
-for match/fixture rotation without the ladder; `--fixtures-year 2027`
-to specify an additional future season.
-
-The offline visual test now displays a simulated final-siren celebration,
-all 18 ladder entries, a published-style future fixture screen, and the
-final score. Its standings/fixture are deliberately fictional and never
-used for real games:
-
-```sh
-git -C ~/afl-led-scoreboard pull --ff-only && afl --demo-upgrades --brightness 10
 ```
