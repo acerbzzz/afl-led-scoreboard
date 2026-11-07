@@ -173,6 +173,37 @@ class LegacyTests(unittest.TestCase):
         stream=io.BytesIO(b':ping\n\nevent: score\ndata: {"gameid":99,"score":{"hscore":36}}\n\n')
         self.assertEqual(list(afl.event_messages(stream)), [('score',{'gameid':99,'score':{'hscore':36}})])
 
+    def test_contact_email_read_before_matrix_initialization(self):
+        """Opening the root-only contact file must precede privilege dropping."""
+        calls = []
+        class FakeMatrix(object):
+            def SetImage(self, img):
+                calls.append('image')
+            def Clear(self):
+                calls.append('clear')
+        def fake_read_email(explicit=None):
+            calls.append('email')
+            return 'test@example.org'
+        def fake_create_matrix(args):
+            calls.append('matrix')
+            return FakeMatrix()
+        def fake_season(year, headers):
+            calls.append('season')
+            self.assertIn('test@example.org', headers['User-Agent'])
+            return [afl.demo_game()]
+        with mock.patch.object(afl, 'read_email', side_effect=fake_read_email), \
+             mock.patch.object(afl, 'create_matrix', side_effect=fake_create_matrix), \
+             mock.patch.object(afl, 'get_season', side_effect=fake_season), \
+             mock.patch.object(afl.time, 'sleep', return_value=None):
+            self.assertEqual(afl.main(['--once', '--favorite', 'FRE']), 0)
+        self.assertEqual(calls[:3], ['email', 'matrix', 'season'])
+
+    def test_offline_demo_never_reads_contact_file(self):
+        with mock.patch.object(afl, 'read_email', side_effect=AssertionError(
+                'Demo must not read private Squiggle contact file')), \
+             mock.patch.object(afl, 'urlopen', side_effect=AssertionError('No network')):
+            self.assertEqual(afl.main(['--demo', '--preview']), 0)
+
     def test_contact_required(self):
         with self.assertRaises(ValueError):
             afl.contact('')

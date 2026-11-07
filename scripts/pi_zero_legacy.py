@@ -584,6 +584,11 @@ def main(argv=None):
         parser.error('Rotate interval >=5 seconds and brightness 1..100 required')
     try:
         verify_logos()
+        # Read the root-owned Squiggle contact file BEFORE RGBMatrix starts.
+        # The matrix driver can drop privileges to 'daemon' during init,
+        # making /etc/afl-led-scoreboard-contact (mode 0600) unreadable.
+        # Offline demo mode never requires the contact file.
+        headers = None if args.demo else contact(read_email(args.email))
         matrix = None if args.preview else create_matrix(args)
         if args.demo:
             frame = draw_game(demo_game())
@@ -597,7 +602,6 @@ def main(argv=None):
                 time.sleep(20)
                 matrix.Clear()
             return 0
-        headers = contact(read_email(args.email))
         lock = threading.RLock()
         stop = threading.Event()
         state = {}
