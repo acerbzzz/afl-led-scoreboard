@@ -133,7 +133,7 @@ def games_ranked(games, favorite, now=None):
 
 
 def upcoming_games(games, favorite=None, now=None):
-    """Only published, not-yet-started games with future Australian dates."""
+    """Only published unstarted games whose Australian local dates are ahead."""
     if now is None:
         now = datetime.utcnow() + timedelta(hours=10)
     today = now.strftime('%Y-%m-%d')
@@ -146,7 +146,7 @@ def upcoming_games(games, favorite=None, now=None):
 
 
 def rotation_schedule(games, favorite=None, now=None):
-    """Keep live scores, real upcoming fixtures AND recent final results."""
+    """Include live scores, next fixtures and recent final scores."""
     if now is None:
         now = datetime.utcnow() + timedelta(hours=10)
     selected = [g for g in games if match_favorite(g, favorite)]
@@ -424,17 +424,51 @@ def draw_game(game, logo_dir=None):
 
 
 def fixture_date_time(game):
-    """Australian local date/time; missing UTC timezone is not guessed."""
+    """Show local Australian kickoff, never guess UTC local time."""
     raw = str(game.get('date') or '')
-    found = re.match(r'^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)', raw)
-    if not found:
+    match = re.match(r'^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)', raw)
+    if not match:
         return '--/--', '--:--'
     try:
-        dt = datetime(*[int(n) for n in found.groups()])
+        dt = datetime(*[int(n) for n in match.groups()])
     except ValueError:
         return '--/--', '--:--'
     if raw.endswith('Z'):
-        zone = re.match(r'^([+-])(\d\d):(\d\d)
+        offset = re.match(r'^([+-])(\d\d):(\d\d)$', str(game.get('tz') or ''))
+        if not offset:
+            return '--/--', '--:--'
+        sign = 1 if offset.group(1) == '+' else -1
+        dt += timedelta(minutes=sign * (int(offset.group(2)) * 60 +
+                                        int(offset.group(3))))
+    return dt.strftime('%d/%m'), dt.strftime('%H:%M')
+
+
+def draw_fixture_frame(game, logo_dir=None):
+    """Next fixture: both real 16px crests, local date/time, round."""
+    from PIL import Image, ImageDraw
+    frame = Image.new('RGB', (64, 32), (0, 0, 0))
+    draw = ImageDraw.Draw(frame)
+    if not game:
+        pixel_text(draw, 2, 13, 'NO FIXTURES', '#D9B16A')
+        return frame
+    day, kickoff = fixture_date_time(game)
+    for y, key in ((0, 'hteam'), (16, 'ateam')):
+        team = club(game.get(key))
+        crest = logo(Image, team[2], 16, logo_dir)
+        frame.paste(crest, (0, y), crest)
+        draw.line((16, y + 1, 16, y + 14), fill=team[3])
+        pixel_text(draw, 18, y + 2, team[1], team[3])
+    pixel_text(draw, 43, 2, 'DEMO' if game.get('_demo') else 'NEXT', '#F2D469')
+    pixel_text(draw, 18, 9, 'HOME', '#A7C4D8')
+    pixel_text(draw, 44, 9, day, '#FFFFFF')
+    pixel_text(draw, 40, 18, 'R%s' % str(game.get('round', '-'))[:2], '#65D5FF')
+    pixel_text(draw, 18, 25, 'AWAY', '#A7C4D8')
+    pixel_text(draw, 44, 25, kickoff, '#FFFFFF')
+    draw.line((17, 15, 63, 15), fill='#27303C')
+    return frame
+
+
+def pixel_text_scaled(draw, x, y, text, color, scale=2):
     """A crisp, native-pixel 2x glyph for goal celebrations."""
     for char in str(text).upper():
         for dy, row in enumerate(PIX.get(char, PIX['?'])):
@@ -658,12 +692,7 @@ def get_standings(year, headers, cache_minutes=60):
 
 
 def draw_ladder_frame(rows, page=0, logo_dir=None):
-    """Show all 18 real clubs together, as rank plus club-colour initials.
-
-    Each 16px logo would occupy half the panel's height, so 18 individual
-    crests cannot fit alongside readable ranks on the one 64x32 screen.
-    Real crests remain mandatory on score, final, alert and fixture screens.
-    """
+    """All 18 teams together: rank + coloured three-letter abbreviation."""
     from PIL import Image, ImageDraw
     frame = Image.new('RGB', (64, 32), (0, 0, 0))
     draw = ImageDraw.Draw(frame)
@@ -695,7 +724,7 @@ def draw_ladder_intro(demo=False):
 
 
 def demo_standings():
-    """Only for explicitly labelled offline demos, never as live standings."""
+    """Synthetic 18-team ladder, only for the labelled offline demo."""
     return normalize_standings({'standings': [
         {'id': club_entry[0], 'rank': rank,
          'pts': max(0, 76 - rank * 4),
