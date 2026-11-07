@@ -316,6 +316,21 @@ class LegacyTests(unittest.TestCase):
                                        side_effect=AssertionError('No duplicate fetch')):
                     self.assertEqual(afl.get_standings(2026, {'User-Agent':'test@example.org'}), rows)
 
+    def test_goal_opt_out_does_not_disable_final_siren(self):
+        from collections import deque
+        base = dict(afl.demo_game(), id=75, complete=90)
+        queue = deque()
+        state = {75: dict(base)}
+        goal = {'gameid': 75, 'type': 'goal', 'side': 'hteam',
+                'score': {'hgoals': 13, 'hscore': 86}}
+        self.assertFalse(afl.update_live_state(state, 'score', goal,
+                                              queue, disable_goals=True))
+        self.assertFalse(queue)
+        self.assertTrue(afl.update_live_state(state, 'complete',
+                         {'gameid': 75, 'complete': 100},
+                         queue, disable_goals=True))
+        self.assertEqual(queue[0]['kind'], 'final')
+
     def test_offline_upgrades_demo_no_email_or_network(self):
         with mock.patch.object(afl, 'urlopen', side_effect=AssertionError('No network')), \
              mock.patch.object(afl, 'read_email', side_effect=AssertionError('No contact')):
@@ -324,6 +339,11 @@ class LegacyTests(unittest.TestCase):
         from PIL import Image
         with Image.open(HERE / 'pi_zero_preview.png') as frame:
             self.assertEqual(frame.size, (640, 320))
+        for filename in ('pi_zero_final_preview.png',
+                         'pi_zero_ladder_preview.png'):
+            with Image.open(HERE / filename) as frame:
+                self.assertEqual(frame.size, (640, 320))
+                self.assertTrue(frame.getbbox())
 
     def test_rotation(self):
         base = afl.demo_game()

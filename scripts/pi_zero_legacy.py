@@ -469,7 +469,8 @@ def goal_from_event(previous, current, ev_type, payload):
             'total': score(current, score_side)[1]}
 
 
-def update_live_state(state, ev_type, payload, alerts, favorite=None):
+def update_live_state(state, ev_type, payload, alerts, favorite=None,
+                      disable_goals=False):
     """Merge SSE payload once and queue at most one alert for each goal."""
     game_id = num(payload.get('id' if ev_type == 'game' else 'gameid')) if isinstance(payload, dict) else None
     previous = dict(state[game_id]) if game_id in state else None
@@ -478,7 +479,8 @@ def update_live_state(state, ev_type, payload, alerts, favorite=None):
     if alerts is None:
         return False
     current = state.get(game_id)
-    alert = goal_from_event(previous, current, ev_type, payload)
+    alert = None if disable_goals else goal_from_event(
+        previous, current, ev_type, payload)
     if alert is None:
         alert = final_from_transition(previous, current)
     if alert is not None and match_favorite(current, favorite):
@@ -627,8 +629,8 @@ def draw_ladder_frame(rows, page, logo_dir=None):
         draw.line((16, y + 1, 16, y + 14), fill=team[3])
         pixel_text(draw, 18, y + 1, '%02d' % row['rank'], '#FFFFFF')
         pixel_text(draw, 28, y + 1, team[1], team[3])
-        pixel_text(draw, 51, y + 1, 'P', '#99C1D1')
-        points = str(row['pts'])[:2]
+        pixel_text(draw, 47, y + 1, 'P', '#99C1D1')
+        points = str(row['pts'])[:3]
         pixel_text(draw, 64 - 4 * len(points), y + 1, points, '#FFFFFF')
         if row['wins'] is not None:
             pixel_text(draw, 18, y + 9, 'W%d' % row['wins'], '#B8D5E3')
@@ -817,7 +819,7 @@ def watch_needed(games):
 
 
 def event_worker(state, lock, stop, headers, alerts=None, wakeup=None,
-                 favorite=None):
+                 favorite=None, disable_goals=False):
     hdr = dict(headers)
     hdr['Accept'] = 'text/event-stream'
     while not stop.is_set():
@@ -833,8 +835,9 @@ def event_worker(state, lock, stop, headers, alerts=None, wakeup=None,
                     if stop.is_set():
                         break
                     with lock:
-                        new_goal = update_live_state(state, ev_type, payload,
-                                                     alerts, favorite)
+                        new_goal = update_live_state(
+                            state, ev_type, payload, alerts, favorite,
+                            disable_goals)
                         if new_goal and wakeup is not None:
                             wakeup.set()
             finally:
@@ -910,6 +913,15 @@ def main(argv=None):
                     result.resize((640, 320), Image.NEAREST).save(
                         os.path.join(BASE, 'pi_zero_goal_preview.png'))
                     print('Wrote pi_zero_goal_preview.png; simulated goal only')
+                elif args.demo_upgrades:
+                    finished = dict(demo, complete=100)
+                    final = draw_final_frame(final_from_transition(demo, finished), 0)
+                    final.resize((640, 320), Image.NEAREST).save(
+                        os.path.join(BASE, 'pi_zero_final_preview.png'))
+                    ladder = draw_ladder_frame(demo_standings(), 0)
+                    ladder.resize((640, 320), Image.NEAREST).save(
+                        os.path.join(BASE, 'pi_zero_ladder_preview.png'))
+                    print('Wrote simulated final and ladder previews (no live data)')
                 else:
                     print('Wrote pi_zero_preview.png; demo scores only')
             elif args.demo_upgrades:
@@ -998,7 +1010,8 @@ def main(argv=None):
                 pool = games_ranked(list(state.values()), args.favorite)
                 chosen = dict(pool[turn % min(6, len(pool))]) if pool else None
             show_ladder = args.ladder_only or (args.ladder_every > 0
-                             and turn > 0 and turn % (args.ladder_every + 1) == 0)
+                             and turn > 0 and turn % (args.ladder_every + 1)
+                             == args.ladder_every)
             if show_ladder:
                 frame = draw_ladder_frame(standings, ladder_page)
                 print('AFL LADDER page %s, season %s' %
@@ -1024,8 +1037,7 @@ def main(argv=None):
             if not args.ladder_only and worker is None:
                 worker = threading.Thread(target=event_worker, args=(
                     state, lock, stop, headers,
-                    None if args.no_goal_animation else alerts,
-                    wakeup, args.favorite))
+                    alerts, wakeup, args.favorite, args.no_goal_animation))
                 worker.daemon = True
                 worker.start()
             turn += 1
