@@ -1,5 +1,7 @@
 # Original Raspberry Pi Zero W (Rev 1.1) — AFL scoreboard
 
+**Compact LED logo experiment:** Pi Zero icons now use the main emblem from each bundled 32×32 logo, discarding the tiny printed wordmark before resizing to 16×16. Pale outside pixels are removed and white highlights reduced. Original files are unchanged. Use `afl --demo --brightness 10` to compare on the physical panel. This cannot add detail beyond 16×16 pixels.
+
 **Logo backdrop fix:** The bundled club images contain opaque pale backgrounds. The legacy Pi renderer now strips only light-coloured pixels connected to each image edge, retaining internal white crest artwork and displaying the surrounding area black. Use a low brightness such as `afl --demo --brightness 10` when evaluating the change.
 
 This is an **optional legacy adapter** for the original Pi Zero W running Raspbian Buster (Python 2.7 and Python 3.7). The normal `afl_scoreboard.py` desktop application requires Python 3.10+ and **will not run** on this older Pi. No OS upgrade or `apt-get` is necessary for this adapter if you already have the older NFL scoreboard's Python 2 `rgbmatrix` bindings and Pillow working.

@@ -196,7 +196,7 @@ def remove_light_logo_background(image):
 
     def light_background(x, y):
         r, g, b, alpha = px[x, y]
-        return alpha > 0 and min(r, g, b) >= 210 and max(r, g, b) - min(r, g, b) <= 36
+        return alpha > 0 and min(r, g, b) >= 185 and max(r, g, b) - min(r, g, b) <= 58
 
     pending = deque()
     seen = set()
@@ -229,6 +229,46 @@ def remove_light_logo_background(image):
     return rgba
 
 
+def compact_logo_art(image_class, original, size):
+    """Make a 16px LED icon from the emblem, not the 32px emblem + wordmark.
+
+    The bundled club crests have tiny lettering at the bottom; when shrunk
+    unchanged it becomes an unreadable, bright rectangle. The larger 32px
+    original remains untouched and only this Pi Zero rendering is adapted.
+    """
+    alpha = remove_light_logo_background(original)
+    if alpha.size[0] >= 24 and alpha.size[1] >= 24:
+        alpha = alpha.crop((0, 0, alpha.size[0],
+                            max(1, int(alpha.size[1] * 0.78))))
+    bounds = alpha.split()[-1].getbbox()
+    if bounds is None:
+        raise IOError('Club logo contains no visible emblem')
+    alpha = alpha.crop(bounds)
+    quality = getattr(image_class, 'LANCZOS', getattr(image_class, 'ANTIALIAS', 1))
+    alpha.thumbnail((size, size), quality)
+    output = image_class.new('RGBA', (size, size), (0, 0, 0, 0))
+    output.paste(alpha, ((size - alpha.size[0]) // 2,
+                         (size - alpha.size[1]) // 2))
+    px = output.load()
+    for y in range(size):
+        for x in range(size):
+            r, g, b, opacity = px[x, y]
+            if opacity < 110:
+                px[x, y] = (0, 0, 0, 0)
+                continue
+            spread = max(r, g, b) - min(r, g, b)
+            # White logo details remain visible, but no longer overpower
+            # a low-brightness physical HUB75 panel.
+            if min(r, g, b) > 185 and spread < 50:
+                r, g, b = int(r * 0.72), int(g * 0.72), int(b * 0.72)
+            elif spread > 35 and max(r, g, b) < 155:
+                r = min(255, int(r * 1.25))
+                g = min(255, int(g * 1.25))
+                b = min(255, int(b * 1.25))
+            px[x, y] = (r, g, b, opacity)
+    return output
+
+
 def logo(image_class, name, size=16, directory=None):
     path = os.path.join(directory or os.path.join(BASE, 'logos'), name + '.bmp')
     if not os.path.isfile(path):
@@ -236,13 +276,7 @@ def logo(image_class, name, size=16, directory=None):
     with image_class.open(path) as original:
         if original.size[0] < 12 or original.size[1] < 12:
             raise IOError('Club logo too small: %s' % path)
-        alpha = remove_light_logo_background(original)
-        quality = getattr(image_class, 'LANCZOS', getattr(image_class, 'ANTIALIAS', 1))
-        alpha.thumbnail((size, size), quality)
-        output = image_class.new('RGBA', (size, size), (0, 0, 0, 0))
-        output.paste(alpha, ((size - alpha.size[0]) // 2,
-                             (size - alpha.size[1]) // 2))
-        return output
+        return compact_logo_art(image_class, original, size)
 
 
 # A 64x32 panel can accommodate exactly two 16px-tall crests. Give each

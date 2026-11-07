@@ -105,6 +105,31 @@ class LegacyTests(unittest.TestCase):
         self.assertTrue(any(crest.getpixel((x, y))[3] >= 200
                             for x in range(3, 13) for y in range(3, 13)))
 
+    def test_compact_club_symbol_removes_tiny_bottom_wordmark(self):
+        from PIL import Image, ImageDraw
+        art = Image.new('RGBA', (32, 32), (245, 242, 240, 255))
+        draw = ImageDraw.Draw(art)
+        draw.ellipse((9, 1, 23, 22), fill=(45, 12, 110, 255))
+        draw.line((16, 3, 16, 18), fill=(255, 255, 255, 255), width=2)
+        # Yellow lettering lies entirely beneath the main emblem.
+        draw.rectangle((9, 27, 23, 29), fill=(245, 208, 0, 255))
+        icon = afl.compact_logo_art(Image, art, 16)
+        self.assertEqual(icon.size, (16, 16))
+        self.assertEqual(icon.getpixel((0, 0))[3], 0)
+        self.assertGreater(sum(px[3] > 127 for px in icon.getdata()), 24)
+        self.assertFalse(any(r > 180 and 120 < g < 230 and b < 80 and a > 200
+                             for r, g, b, a in icon.getdata()))
+        self.assertLessEqual(max((r for r,g,b,a in icon.getdata()
+                                  if a > 200 and abs(r-g) < 10 and abs(g-b) < 10),
+                                 default=0), 185)
+
+    def test_bundled_logos_remain_mandatory_and_renderable(self):
+        from PIL import Image
+        for team in afl.TEAM_LIST:
+            icon = afl.logo(Image, team[2], 16, str(HERE / 'logos'))
+            self.assertEqual(icon.size, (16,16))
+            self.assertTrue(icon.getbbox(), team[2])
+
     def test_rotation(self):
         base = afl.demo_game()
         older = dict(base, id=1, complete=100, date='2026-09-21 18:00:00')
