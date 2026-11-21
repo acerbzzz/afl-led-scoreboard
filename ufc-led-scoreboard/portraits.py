@@ -5,6 +5,8 @@ from pathlib import Path
 from urllib.request import urlopen
 from PIL import Image, ImageOps
 
+RESAMPLE = getattr(Image, "Resampling", Image)
+
 
 def crop_face(source):
     portrait = source.convert("RGBA")
@@ -15,7 +17,7 @@ def crop_face(source):
     size = min(portrait.width, portrait.height, max(1, round(portrait.height * .78)))
     left = (portrait.width - size) // 2
     portrait = portrait.crop((left, 0, left + size, size))
-    return ImageOps.fit(portrait, (30, 30), method=Image.Resampling.LANCZOS)
+    return ImageOps.fit(portrait, (30, 30), method=RESAMPLE.LANCZOS)
 
 
 @lru_cache(maxsize=128)

@@ -8,6 +8,8 @@ from urllib.request import urlopen
 from urllib.parse import urlsplit
 from PIL import Image
 
+RESAMPLE = getattr(Image, "Resampling", Image)
+
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "badges"
 ALIASES = json.loads((ASSETS / "aliases.json").read_text())
@@ -43,7 +45,7 @@ def scaled(source, w, h):
                 return None
             mark = im.convert("RGBA")
         mark = mark.crop(mark.getbbox())
-        mark.thumbnail((w,h), Image.Resampling.LANCZOS)
+        mark.thumbnail((w,h), RESAMPLE.LANCZOS)
         return mark
     except (OSError,ValueError):
         return None

@@ -10,6 +10,8 @@ from urllib.request import Request, urlopen
 
 from PIL import Image, ImageDraw
 
+RESAMPLE = getattr(Image, "Resampling", Image)
+
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "ufc-led-scoreboard"))
 from scoreboard import pixels, big_line
@@ -55,7 +57,7 @@ def draw(sport, rows, flag=""):
         ink = ImageDraw.Draw(strip)
         pixels(ink,0,0,code,color,strip.width)
         pixels(ink,(len(code)+1)*4 if code else 0,0,score,"white",strip.width)
-        strip = strip.resize((min(31,strip.width),6),Image.Resampling.NEAREST)
+        strip = strip.resize((min(31,strip.width),6),RESAMPLE.NEAREST)
         frame.paste(strip,(col+(32-strip.width)//2,21))
     footer = (flag+" " if flag else "") + phase
     pixels(pen, 0, 28, footer, "#ffd05e", 64)

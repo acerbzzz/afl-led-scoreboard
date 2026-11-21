@@ -11,7 +11,7 @@ git clone --depth 1 --single-branch --branch ultimate-scoreboard https://github.
 cd ~/ultimate-scoreboard
 ```
 
-1. Use Raspberry Pi OS with Python 3.10+, Pillow 9.1+ and your existing hzeller rgbmatrix Python bindings.
+1. Use Raspberry Pi OS with Python 3.9+, Pillow 8.2+ and your existing hzeller rgbmatrix Python bindings.
 2. Run `bash install.sh`. If the binding lives in your previous scoreboard environment, pass that Python instead, e.g. `bash install.sh /opt/scoreboard-venv/bin/python regular 2`. The interpreter must be executable by the daemon user. Use your working mapping and slowdown values. Direct GPIO defaults to regular and 2.
 3. The installer reuses the AFL email configuration or prompts for the contact address used with Squiggle. It switches off detected standalone AFL/UFC services so one process drives the panel, then enables the combined service at boot. Stop any manually launched board or differently named display service before starting.
 4. On the same trusted Wi-Fi, open the address printed by the installer. If the hostname fails, use the printed Pi LAN address and port 8765. Anyone on that LAN can control the panel. Keep it local.

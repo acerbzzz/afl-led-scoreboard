@@ -3,7 +3,23 @@ set -euo pipefail
 cd "$(dirname "$0")"
 py="${1:-$(command -v python3)}"
 [[ "$py" = /* && -x "$py" ]] || { echo 'Pass the absolute Python path from your working scoreboard.'; exit 1; }
-"$py" -c 'import sys; assert sys.version_info >= (3,10); from PIL import Image; from rgbmatrix import RGBMatrix'
+"$py" - <<'PYTHON'
+import sys
+if sys.version_info < (3, 9):
+    sys.exit("This scoreboard needs Python 3.9 or newer. Detected " + sys.version.split()[0])
+try:
+    import PIL
+    from PIL import Image
+except ImportError:
+    sys.exit("Pillow is missing. Run: sudo apt install python3-pil")
+
+if tuple(int(part) for part in PIL.__version__.split(".")[:2]) < (8, 2):
+    sys.exit("Pillow " + PIL.__version__ + " is too old. This build requires Pillow 8.2 or newer.")
+try:
+    from rgbmatrix import RGBMatrix
+except ImportError:
+    sys.exit("LED driver missing from " + sys.executable + ". Run this installer with the Python path used by your working scoreboard.")
+PYTHON
 mapping="${2:-regular}"
 slow="${3:-2}"
 [[ "$mapping" =~ ^(regular|adafruit-hat|adafruit-hat-pwm)$ && "$slow" =~ ^[0-9]+$ && "$py" != *" "* ]] || exit 2

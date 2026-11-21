@@ -1,6 +1,6 @@
 """AFL LED scoreboard powered by the Squiggle REST and Event APIs.
 
-Python 3.10+. No browser-side calls; physical hardware requires rgbmatrix.
+Python 3.9+. No browser-side calls; physical hardware requires rgbmatrix.
 """
 from __future__ import annotations
 
@@ -21,6 +21,8 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import gameguide as guide
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+RESAMPLE = getattr(Image, "Resampling", Image)
 
 API = "https://api.squiggle.com.au/"
 EVENTS = "https://sse.squiggle.com.au/events"
@@ -294,7 +296,9 @@ def logo_image(full: str, size: int = 9) -> Image.Image:
             if path == hd and image.getchannel("A").getextrema()[0] == 255:
                 raise ValueError("HD club logo must have a transparent background")
             # Never stretch a crest to a square; contain and center it on alpha.
-            scaled = ImageOps.contain(image, (size, size), method=Image.Resampling.LANCZOS)
+            ratio = min(size / image.width, size / image.height)
+            dimensions = (max(1, round(image.width * ratio)), max(1, round(image.height * ratio)))
+            scaled = image.resize(dimensions, resample=RESAMPLE.LANCZOS)
             output = Image.new("RGBA", (size, size), (0, 0, 0, 0))
             output.paste(scaled, ((size - scaled.width) // 2, (size - scaled.height) // 2))
             return output
@@ -577,7 +581,7 @@ def show(frame: Image.Image, mode: str, preview_path: Path, matrix=None,
             output = draw_game_hd(game)
         elif preview_style == "pixel":
             # True 64x32 LED simulation, enlarged with intentionally visible pixels.
-            output = frame.resize((640, 320), Image.Resampling.NEAREST)
+            output = frame.resize((640, 320), RESAMPLE.NEAREST)
         else:
             raise ValueError(f"Unknown preview style: {preview_style}")
         output.save(preview_path)

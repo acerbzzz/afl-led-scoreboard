@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from urllib.request import Request, urlopen
 
 from PIL import Image, ImageDraw
+
+RESAMPLE = getattr(Image, "Resampling", Image)
 from portraits import photo
 from finishes import ResultFeed, method_label
 
@@ -114,7 +116,7 @@ def big_line(image, label, y, color):
     width = max(1, len(label) * 4 - 1)
     strip = Image.new("RGB", (width, 4))
     pixels(ImageDraw.Draw(strip), 0, 0, label, color, width)
-    strip = strip.resize((min(64, width * 2), 9), Image.Resampling.NEAREST)
+    strip = strip.resize((min(64, width * 2), 9), RESAMPLE.NEAREST)
     image.paste(strip, ((64 - strip.width) // 2, y))
 
 
@@ -123,7 +125,7 @@ def promotion_mark():
     path = Path(__file__).resolve().parent.parent / "badges/ufc/ufc.png"
     with Image.open(path) as source:
         mark = source.convert("RGBA")
-    mark.thumbnail((18,7),Image.Resampling.LANCZOS)
+    mark.thumbnail((18,7),RESAMPLE.LANCZOS)
     red = Image.new("RGBA",mark.size,"#ff3744")
     red.putalpha(mark.getchannel("A"))
     return red
@@ -278,7 +280,7 @@ def main():
         elif matrix is not None:
             matrix.SetImage(frame)
         else:
-            frame.resize((640, 320), Image.Resampling.NEAREST).save("preview.png")
+            frame.resize((640, 320), RESAMPLE.NEAREST).save("preview.png")
 
     try:
         while True:
