@@ -1,116 +1,45 @@
-# AFL LED Scoreboard 🏉
+# Ultimate Pi Scoreboard
 
-An original Australian-rules scoreboard for a **64×32 HUB75 RGB LED matrix** on a Raspberry Pi, inspired by [mikemountain/nfl-led-scoreboard](https://github.com/mikemountain/nfl-led-scoreboard). Displays club colours, mandatory real club logos for all 18 teams, goals.behinds (**total points**), quarter/time from Squiggle, and pre-game / final states. Uses the free [Squiggle AFL API](https://api.squiggle.com.au/).
+One 64×32 HUB75 panel, one Pi and an iPhone remote. The controller starts in AFL Demo so you can check the LEDs immediately. In Safari choose a channel, then Feed for provider scores. Add the remote to your Home Screen from the Share menu. The Pi remembers the last channel, source, manual card and brightness after reboot.
 
-## Features
+## Install on the Pi
 
-- 64×32 LED output using [`rpi-rgb-led-matrix`](https://github.com/hzeller/rpi-rgb-led-matrix), plus a **crisp 1280×640 desktop preview** by default or 640×320 pixel-accurate LED simulation (`--preview-style pixel`).
-- **LED-first pixel layout**: native 64×32 panel uses 12×12 club logos (up from 9×9) with compact scoreboard rows. Downloaded transparent HD crests are preferred when present and downsampled for physical LEDs; if absent, bundled club crests are still required. This differs intentionally from the roomy desktop layout.
-- **Logos are mandatory**: all 18 bundled team crests are validated at startup (no initials or colour-square fallbacks). Download 500px transparent replacements once for a much sharper desktop preview; the bundled club logos remain available when HD images have not been copied to the Raspberry Pi.
-- All 18 AFL clubs, optional team filter (`--favorite FRE`), Australian Eastern kickoff times, score in `12.8  80` format.
-- One-shot fixture lookup via Squiggle REST, **cached 30 minutes**, and a long-lived SSE stream for live updates (no aggressive REST polling).
-- **Automatic match rotation**: cycle through up to six relevant games every 15 seconds without extra REST requests; one SSE connection covers active matches.
-- Automatic SSE recovery, stale-cache fallback for network trouble, `--demo` mode, and offline unit tests.
-- Compact colour-coded `FINAL`, `LIVE`, quarter/half-time labels and Australian-local fixture times.
-- Raspberry Pi RGB diagnostics (`--hardware-test`) and optional systemd boot-start installer.
-- **No API key or paid service** required. Squiggle does require an identifying `User-Agent` containing your own contact email.
-
-## Quick preview (Windows/macOS/Linux/PC)
+On the Pi, clone the multi-sport branch into your home directory.
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate           # Windows: .venv\\Scripts\\activate
-python -m pip install -r requirements.txt
-python afl_scoreboard.py --demo
-# To see how the small physical matrix will look:
-python afl_scoreboard.py --demo --preview-style pixel
-# open preview.png
+git clone --depth 1 --single-branch --branch ultimate-scoreboard https://github.com/acerbzzz/afl-led-scoreboard.git ~/ultimate-scoreboard
+cd ~/ultimate-scoreboard
 ```
 
-## Real Squiggle scores
+1. Use Raspberry Pi OS with Python 3.10+, Pillow 9.1+ and your existing hzeller rgbmatrix Python bindings.
+2. Run `bash install.sh`. If the binding lives in your previous scoreboard environment, pass that Python instead, e.g. `bash install.sh /opt/scoreboard-venv/bin/python regular 2`. The interpreter must be executable by the daemon user. Use your working mapping and slowdown values. Direct GPIO defaults to regular and 2.
+3. The installer reuses the AFL email configuration or prompts for the contact address used with Squiggle. It switches off detected standalone AFL/UFC services so one process drives the panel, then enables the combined service at boot. Stop any manually launched board or differently named display service before starting.
+4. On the same trusted Wi-Fi, open the address printed by the installer. If the hostname fails, use the printed Pi LAN address and port 8765. Anyone on that LAN can control the panel. Keep it local.
 
-Set **your own contact email**; this is required by the free API and must not be a made-up address. Set it in the terminal environment (do not commit it):
+For subsequent updates, run this from the Pi. Settings and favourites live outside the checkout.
 
 ```bash
-export SQUIGGLE_CONTACT_EMAIL='you@your-domain.com'
-python afl_scoreboard.py --once --year 2026 --favorite FRE
+cd ~/ultimate-scoreboard && git pull --ff-only && bash install.sh
 ```
 
-For a long-running scoreboard (use SSE while an AFL match is live):
+## Watching
 
-```bash
-python afl_scoreboard.py --year 2026 --favorite FRE
-# To rotate all clubs instead, omit --favorite:
-python afl_scoreboard.py --year 2026 --rotate-seconds 10 --rotate-limit 6
-```
+AFL uses the existing Squiggle rotation and club logos. UFC uses the existing fight feed, introduction portraits and finish animations. Live fight names now occupy the full panel width. The final card shows the winner and method together. UFC Results cycles completed bouts from the latest completed card found in the past 28 days, including when the main feed has switched to the next event. METHOD PENDING means the provider has yet to supply the method. Decision types use DEC UD, DEC SD and DEC MD. The clock reflects provider updates.
 
-**Rotation:** The most relevant games are ranked live first, followed by upcoming fixtures and recently completed games. `--favorite FRE` limits the rotation to Fremantle matches. `--once` renders just the first selected game.  `Ctrl+C` stops rotation. The preview image is overwritten each cycle; open or reload it to view the current frame. The default HD preview is for a desktop monitor, whereas `--preview-style pixel` reproduces the 64×32 matrix grid.
+Cricket follows Australian national sides and selected domestic competitions when listed in ESPN's cricket header. NRL uses the NRL draw. NFL, MLB, NBA and Australian NBL use ESPN scoreboards. Two-team feeds rotate matches every ten seconds and refresh about once a minute. Provider coverage varies. OFFLINE marks a failed refresh and NO MATCH means the source returned no matching fixtures. Demo uses labelled sample scores. Manual accepts names, scores and status details from the phone, including overs or a bout result.
 
-**Season timing:** When no games are scheduled, the preview shows the latest result for the requested season (if one exists). Squiggle provides scores, fixture and approximate match progress; it does not guarantee a second-perfect game clock.
+## Preview and troubleshoot
 
-## Raspberry Pi LED matrix
+Run `python3 board.py` with Pillow installed to preview without GPIO, then open http://localhost:8765. For service diagnostics use `sudo journalctl -u ultimate-scoreboard -n 40 --no-pager`. If the panel is already occupied, check `systemctl list-units --type=service | grep -Ei 'score|matrix'`. To return to a previous setup run `sudo systemctl disable --now ultimate-scoreboard` then enable the standalone service you previously used, e.g. `sudo systemctl enable --now afl-led-scoreboard`.
 
-Hardware: Raspberry Pi (Pi Zero 2 W, 3, or 4 recommended), one 64×32 HUB75 panel, suitable 5 V supply, and compatible HAT/Bonnet or wiring. Follow the wiring and install instructions for [hzeller/rpi-rgb-led-matrix](https://github.com/hzeller/rpi-rgb-led-matrix); that driver is **not** installed automatically by `pip` on your computer.
+## Team artwork
 
-```bash
-sudo -E .venv/bin/python afl_scoreboard.py --driver matrix --year 2026 --mapping adafruit-hat --brightness 55 --gpio-slowdown 2
-```
+NFL, MLB, NBA, NBL, cricket and NRL show an emblem beside each side. AFL uses updated club crests. UFC displays its promotion mark on introductions, live fights, celebrations and results. Bundled images work offline. Cricket uses country flags and can also load additional team artwork supplied by its ESPN feed. A team without artwork gets an initialled badge. Sources: ESPN team and league artwork, FootyLogos NRL club marks.
 
-Use `--mapping regular` if wired directly; board-specific electrical settings matter. Avoid running as root unnecessarily except when your matrix binding requires it. Set `SQUIGGLE_CONTACT_EMAIL` before launching. Change `--year` for future seasons; the default is the current Australian year.
+## Watching one game
 
-## Hardware check and start on boot (run on the Raspberry Pi only)
+In Games, select a channel and source, then choose **Watch this game** to pin a fixture or fight. Use the stars to prioritise your teams on that channel. Now showing mirrors the physical panel, including TV delay. Unpin to resume rotation. Pins, favourites, night hours and delay survive a reboot. Once a pinned frame has appeared it is saved for recovery, including the final result. Selecting a different channel or source releases the pin.
 
-**Codespaces can render preview PNGs but cannot drive physical GPIO pins.** On a Pi with a 64×32 HUB75 panel, suitable HAT and **separate 5V panel power**:
+Settings offers a 0–120 second TV delay and a night brightness cap using the Pi's local clock. Equal start and end hours disable the cap. After changing channel, pin or delay the buffer fills again. Connection shows the Pi link separately from the last provider update. Provider coverage and pace determine when a score, finish method, down and distance, or base occupancy becomes available. NFL and MLB alternate available situation details with the clock or inning. Only the selected channel polls its feed.
 
-```bash
-sudo apt-get update
-sudo apt-get install -y python3-dev cython3 cmake git
-python3 -m venv --system-site-packages .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pip install 'git+https://github.com/hzeller/rpi-rgb-led-matrix'
-# Confirm the actual mapping for your wiring; 'regular' is only a starting point.
-sudo .venv/bin/python afl_scoreboard.py --driver matrix --hardware-test --mapping regular
-# Only after verifying the LEDs work:
-bash scripts/install_service.sh
-```
-
-The test displays red/green/blue diagnostic frames followed by an AFL demo; the hardware wiring and electrical safety must be verified on your actual panel. A **mocked matrix** is covered by offline tests, but that is not a physical LED test. The installer asks for your contact email and mapping, writes an environment file with limited permissions under `/etc`, installs `afl-led-scoreboard.service`, and starts it at boot. It is **not** intended to run inside Codespaces. Logs: `sudo journalctl -u afl-led-scoreboard -f`. Disable: `sudo systemctl disable --now afl-led-scoreboard.service`.
-
-The driver may need initial root privileges for precise GPIO timing and normally drops privileges afterwards. See [upstream hardware instructions](https://github.com/hzeller/rpi-rgb-led-matrix). Raspberry Pi 5 is not listed as officially supported by the upstream driver; Pi Zero 2 W, Pi 3 and Pi 4 are more predictable choices.
-
-## Tests
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-## Data-provider responsibility
-
-Squiggle is free, but it asks users to identify their bot via an email-bearing User-Agent, cache REST data, avoid parallel requests, and use the [event API](https://sse.squiggle.com.au/) for live updates. This program is designed around those rules. It is not affiliated with the AFL, Squiggle, or the NFL scoreboard author.
-
-## Credits & licensing
-
-Inspired by the LED scoreboard concept of [mikemountain/nfl-led-scoreboard](https://github.com/mikemountain/nfl-led-scoreboard) (GPL-3.0); rewritten for AFL rather than copying the NFL application. Existing `logos/*.bmp` were carried forward from this project's earlier repository state. Their rights may differ; verify before redistribution.
-
-## Required club logos
-
-The `logos/` directory must contain all **18** checked-in club images with the exact filenames shown in `TEAMS` (for example `logos/Fremantle.bmp` and `logos/Brisbane.bmp`). These legacy files have `.bmp` filenames but contain images readable by Pillow. Keep the whole folder when copying to your Raspberry Pi.
-
-At startup, `verify_all_logos()` loads and validates every image. If even one is missing or corrupt, the application stops with an actionable message. An unrecognised Squiggle team name also stops that render instead of showing fake initials. This ensures no logo-free scoreboard. The 64×32 physical panel inherently limits fine crest details; the default HD preview shows larger full club logos but image quality is limited by the source assets.
-
-## Sharper transparent desktop logos
-
-The full-resolution desktop preview supports **18 locally cached 500px AFL club PNGs**. Download once in a Codespaces or regular PC terminal with:
-
-```bash
-python scripts/fetch_hd_logos.py && python scripts/fetch_hd_logos.py --check && python afl_scoreboard.py --demo
-```
-
-These come from ESPN's publicly accessible AFL logo image CDN, not from Squiggle, and are used only for the desktop preview. The downloader validates that every image is a readable transparent PNG of at least 160px, rejecting failed/incorrect/opaque downloads. If any download fails, it reports the failing club and leaves the previously installed set unchanged. With no HD set downloaded, the preview continues to display the original mandatory club logos; it does **not** invent logos. The 64×32 physical LED uses the bundled sprites.
-
-**Trademark note:** These external AFL club crests belong to their respective owners. `logos_hd/` is deliberately gitignored and is not covered by the project GPL; do not commit/repackage or use commercially without checking the rights holders' terms. If the ESPN URL is blocked or changes, no logo is silently substituted.
-
-Demo mode is prominently marked **DEMO** and **SAMPLE DATA**, including in the tiny LED frame. This prevents its illustrative scores from being mistaken for live Squiggle results.
-## Original Raspberry Pi Zero W (Raspbian Buster)
-
-See [Pi Zero Buster setup and calibration](docs/pi-zero-buster.md) for the optional Python 2.7 adapter. It uses the existing RGB matrix bindings, all 18 required club logos, and real Squiggle data. **Calibrate scrambled LED rows before enabling automatic operation.**
+College Football follows ESPN’s NCAA Division I FBS slate, including unranked teams. Select Games → College Football → Feed to choose a matchup. The offline demo features Ohio State and Michigan. Live games use team logos from ESPN when available.
