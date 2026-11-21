@@ -20,10 +20,10 @@ from urllib.parse import urlsplit
 from sports import ROOT, URLS, draw, pixels
 from PIL import Image, ImageDraw
 sys.path.insert(0, str(ROOT / "afl"))
-from afl_scoreboard import make_matrix
+from matrix_driver import make_matrix
 
 CHANNELS = ["AFL", "UFC", "UFC Results", *URLS]
-DEFAULT = dict(sport="AFL", mode="Demo", brightness=50, names=["HOME","AWAY"],
+DEFAULT = dict(sport="AFL", mode="Demo", brightness=20, names=["HOME","AWAY"],
                scores=["0","0"], phase="LIVE",pin="", favourites=[],delay=0,night=False,
                nightStart=22,nightEnd=7,nightBrightness=12)
 lock = threading.Lock()
@@ -75,6 +75,7 @@ class Handler(BaseHTTPRequestHandler):
                 current = (state["sport"],state["mode"],state["pin"],state["delay"])
                 synced = current == display_key
                 payload = dict(state=state.copy(), channels=CHANNELS, token=token,
+                               ready=frame_ready and synced,
                                status=status if synced else "Changing selection",
                                guide=listing if synced else empty_guide(), actualBrightness=actual_brightness)
             self.send(json.dumps(payload).encode(), "application/json")
@@ -144,7 +145,7 @@ def empty_guide():
 
 
 def display(matrix):
-    global preview,status,listing,actual_brightness,display_key
+    global preview,status,listing,actual_brightness,display_key,frame_ready
     tmp = tempfile.TemporaryDirectory()
     target = Path(tmp.name)/"current.png"
     guide_path = target.with_name("guide.json")
@@ -161,12 +162,16 @@ def display(matrix):
             now = time.monotonic()
             switched = key != previous
             if switched:
+                frame_ready = False
                 stop(proc)
                 proc = None
                 previous = key
                 queue.clear()
-                target.unlink(missing_ok=True)
-                guide_path.unlink(missing_ok=True)
+                for stale in (target, guide_path):
+                    try:
+                        stale.unlink()
+                    except FileNotFoundError:
+                        pass
                 stamp = gstamp = retry = 0
                 manual_card = None
                 guide = empty_guide()
@@ -175,8 +180,13 @@ def display(matrix):
                 last_visible = None
                 held_game = None
                 if pin and held.exists():
-                    cache = json.loads(held.read_text())
-                    if cache["key"] == list(key):
+                    try:
+                        cache = json.loads(held.read_text())
+                        Image.open(BytesIO(base64.b64decode(cache["png"]))).verify()
+                        assert isinstance(cache["guide"]["games"], list)
+                    except (OSError, ValueError, KeyError, TypeError, AssertionError):
+                        cache = {}
+                    if cache.get("key") == list(key):
                         last_visible = base64.b64decode(cache["png"])
                         visible = Image.open(BytesIO(last_visible)).convert("RGB")
                         guide = cache["guide"]
@@ -235,6 +245,7 @@ def display(matrix):
                         matrix.SetImage(ready)
                     with lock:
                         preview=data
+                        frame_ready=True
                     if pin and meta["showing"]==pin:
                         held_game=next((g for g in meta["games"] if g["id"]==pin),held_game)
                     if pin and meta["showing"]==pin and data!=last_visible:
@@ -276,7 +287,7 @@ if __name__ == "__main__":
     parser.add_argument("--port",type=int,default=8765)
     parser.add_argument("--data",type=Path,default=Path.home()/".pi-scoreboard")
     args = parser.parse_args()
-    args.brightness = 50
+    args.brightness = 20
     matrix = make_matrix(args) if args.matrix else None
     if os.geteuid() == 0 and args.matrix:
         import pwd
@@ -286,13 +297,18 @@ if __name__ == "__main__":
         os.setuid(daemon.pw_uid)
     args.data.mkdir(exist_ok=True, parents=True)
     statefile = args.data.resolve()/"settings.json"
-    state = json.loads(statefile.read_text()) if statefile.exists() else DEFAULT.copy()
-    if state.get("sport") == "A-League":
-        state["sport"] = "AFL"
-    state=validated({**DEFAULT,**state})
+    try:
+        state = json.loads(statefile.read_text()) if statefile.exists() else DEFAULT.copy()
+        if state.get("sport") == "A-League":
+            state["sport"] = "AFL"
+        state = validated({**DEFAULT, **state})
+    except (OSError, ValueError, TypeError, AttributeError):
+        print("Saved settings unreadable; starting with safe defaults", flush=True)
+        state = DEFAULT.copy()
     listing=empty_guide()
     display_key=None
     actual_brightness=state["brightness"]
+    frame_ready = False
     status = "Starting scoreboard"
     preview = png(Image.new("RGB",(64,32)))
     server = ThreadingHTTPServer(("0.0.0.0",args.port),Handler)

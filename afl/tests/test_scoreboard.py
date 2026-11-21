@@ -38,7 +38,7 @@ class ScoreboardTests(unittest.TestCase):
         self.assertEqual(afl.resolve_team("St Kilda")[0], "STK")
 
     def test_squiggle_naive_dates_are_melbourne_time(self):
-        from zoneinfo import ZoneInfo
+        from afl_scoreboard import ZoneInfo
         mel = datetime(2026, 9, 26, 14, 30, tzinfo=ZoneInfo("Australia/Melbourne"))
         self.assertEqual(afl.iso_date("2026-09-26 14:30:00"), mel.astimezone(timezone.utc))
 

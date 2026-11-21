@@ -1,6 +1,6 @@
 """AFL LED scoreboard powered by the Squiggle REST and Event APIs.
 
-Python 3.9+. No browser-side calls; physical hardware requires rgbmatrix.
+Python 3.7+. No browser-side calls; physical hardware requires rgbmatrix.
 """
 from __future__ import annotations
 
@@ -15,7 +15,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from dateutil.tz import gettz
+
+    def ZoneInfo(name):
+        zone = gettz(name)
+        if zone is None:
+            raise ValueError("Unknown timezone: " + name)
+        return zone
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import gameguide as guide
@@ -403,8 +412,29 @@ def draw_game(game: dict | None, width: int = 64, height: int = 32) -> Image.Ima
 HD_WIDTH, HD_HEIGHT = 1280, 640
 
 
+class _LegacyFont(ImageFont.ImageFont):
+    """Old Pillow's FreeType path can crash; use its built-in bitmap font."""
+    def __init__(self, size):
+        self.base = ImageFont.load_default()
+        self.scale = max(1, size // 11)
+
+    def _safe(self, text):
+        return text.replace("•", "-").encode("latin1", "replace").decode("latin1")
+
+    def getsize(self, text, *args, **kwargs):
+        w, h = self.base.getsize(self._safe(text))
+        return w * self.scale, h * self.scale
+
+    def getmask(self, text, mode="", *args, **kwargs):
+        mask = self.base.getmask(self._safe(text), "L")
+        image = Image.frombytes("L", mask.size, bytes(mask))
+        return image.resize((image.width * self.scale, image.height * self.scale), RESAMPLE.NEAREST).im
+
+
 def _font(size: int, bold: bool = False):
     """Pillow bundles DejaVu fonts on most platforms, with a safe fallback."""
+    if not hasattr(ImageDraw.ImageDraw, "textbbox"):
+        return _LegacyFont(size)
     name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
     try:
         return ImageFont.truetype(name, size)
@@ -412,9 +442,23 @@ def _font(size: int, bold: bool = False):
         return ImageFont.load_default()
 
 
+def _text_bounds(draw, text, font):
+    if hasattr(draw, "textbbox"):
+        return draw.textbbox((0, 0), text, font=font)
+    width, height = draw.textsize(text, font=font)
+    return (0, 0, width, height)
+
+
+def _rounded(draw, box, radius=0, **kwargs):
+    if hasattr(draw, "rounded_rectangle"):
+        draw.rounded_rectangle(box, radius=radius, **kwargs)
+    else:
+        draw.rectangle(box, **kwargs)
+
+
 def _center_text(draw: ImageDraw.ImageDraw, middle: tuple[int, int], text: str,
                  font, fill: str) -> None:
-    left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+    left, top, right, bottom = _text_bounds(draw, text, font)
     draw.text((middle[0] - (right - left) / 2 - left,
                middle[1] - (bottom - top) / 2 - top), text, font=font, fill=fill)
 
@@ -424,7 +468,7 @@ def _bounded_text(draw: ImageDraw.ImageDraw, text: str, max_width: int,
     """Size text to fit a given area rather than silently clipping the team name."""
     for size in range(preferred_size, minimum_size - 1, -2):
         font = _font(size, bold)
-        if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+        if _text_bounds(draw, text, font)[2] <= max_width:
             return font
     return _font(minimum_size, bold)
 
@@ -437,7 +481,7 @@ def draw_game_hd(game: dict | None) -> Image.Image:
         offset = int(11 * y / HD_HEIGHT)
         draw.line((0, y, HD_WIDTH, y), fill=(7 + offset, 17 + offset, 29 + offset))
 
-    draw.rounded_rectangle((24, 24, 1256, 616), radius=30,
+    _rounded(draw, (24, 24, 1256, 616), radius=30,
                            fill="#0b1525", outline="#2b3d52", width=2)
     draw.rectangle((28, 26, 1252, 32), fill="#12bdc7")
     demo = bool(game and game.get("_demo"))
@@ -470,16 +514,16 @@ def draw_game_hd(game: dict | None) -> Image.Image:
         state_label, detail, state_color = "LIVE", status_text(game), "#fb686e"
     else:
         state_label, detail, state_color = "UPCOMING", "MATCH PREVIEW", "#f5c85d"
-    draw.rounded_rectangle((1010, 61, 1208, 115), radius=22,
+    _rounded(draw, (1010, 61, 1208, 115), radius=22,
                            fill="#1b283a", outline=state_color, width=2)
     _center_text(draw, (1109, 87), state_label, _font(25, True), state_color)
     draw.text((1017, 120), detail[:19], font=_font(16), fill="#9eb0c5")
 
     for y, side, prefix in ((169, "hteam", "h"), (366, "ateam", "a")):
         short, full, color = team_data(game, side)
-        draw.rounded_rectangle((55, y, 1225, y + 175), radius=22,
+        _rounded(draw, (55, y, 1225, y + 175), radius=22,
                                fill="#142135", outline="#30415a", width=2)
-        draw.rounded_rectangle((57, y + 2, 64, y + 173), radius=3, fill=color)
+        _rounded(draw, (57, y + 2, 64, y + 173), radius=3, fill=color)
         draw.ellipse((77, y + 23, 204, y + 150), fill="#0b1423", outline=color, width=3)
         # Larger, transparent native-resolution crest with aspect ratio preserved.
         crest = logo_image(full, 116)
@@ -494,11 +538,11 @@ def draw_game_hd(game: dict | None) -> Image.Image:
         gb, total = format_scoring(game, prefix)
         score_font = _bounded_text(draw, gb, 225, 52, 30, bold=True)
         right_gb = 985
-        gb_width = draw.textbbox((0, 0), gb, font=score_font)[2]
+        gb_width = _text_bounds(draw, gb, score_font)[2]
         draw.text((right_gb - gb_width, y + 55), gb, font=score_font, fill="#c3d1e2")
         draw.line((1015, y + 44, 1015, y + 136), fill="#34435a", width=2)
         total_font = _bounded_text(draw, total, 160, 91, 48, bold=True)
-        b = draw.textbbox((0, 0), total, font=total_font)
+        b = _text_bounds(draw, total, total_font)
         draw.text((1158 - (b[2] - b[0]), y + 32), total,
                   font=total_font, fill="#ffffff")
 

@@ -45,7 +45,7 @@ def draw(sport, rows, flag=""):
         if mark:
             frame.paste(mark,(col+(32-mark.width)//2,(20-mark.height)//2),mark)
         else:
-            pen.rounded_rectangle((col+4,1,col+27,18),radius=4,outline=color)
+            pen.rectangle((col+4,1,col+27,18),outline=color)
             pixels(pen,col+8,8,name[:4],color,col+26)
         if not score:
             pixels(pen,col,21,name[:8],color,col+32)

@@ -42,4 +42,4 @@ class WatchSettingsTests(unittest.TestCase):
     def test_brightness_wraps_midnight(self):
         from board import brightness,DEFAULT
         s=dict(DEFAULT,night=True,nightBrightness=12)
-        self.assertEqual([brightness(s,h) for h in (21,22,0,6,7)], [50,12,12,12,50])
+        self.assertEqual([brightness(s,h) for h in (21,22,0,6,7)], [20,12,12,12,20])

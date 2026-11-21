@@ -11,12 +11,12 @@ git clone --depth 1 --single-branch --branch ultimate-scoreboard https://github.
 cd ~/ultimate-scoreboard
 ```
 
-1. Use Raspberry Pi OS with Python 3.9+, Pillow 8.2+ and your existing hzeller rgbmatrix Python bindings.
-2. Run `bash install.sh`. If the binding lives in your previous scoreboard environment, pass that Python instead, e.g. `bash install.sh /opt/scoreboard-venv/bin/python regular 2`. The interpreter must be executable by the daemon user. Use your working mapping and slowdown values. Direct GPIO defaults to regular and 2.
-3. The installer reuses the AFL email configuration or prompts for the contact address used with Squiggle. It switches off detected standalone AFL/UFC services so one process drives the panel, then enables the combined service at boot. Stop any manually launched board or differently named display service before starting.
+1. Use Raspberry Pi OS with Python 3.7+, Pillow 5.4+ and your existing hzeller rgbmatrix bindings. Raspbian Buster is supported; keep the existing OS and wiring.
+2. Run `bash install.sh`. It automatically uses the installed Python 2 LED binding when Python 3 has no binding. If you already have a working Python 3 environment, pass that Python instead, e.g. `bash install.sh /opt/scoreboard-venv/bin/python regular 2`. The interpreter must be executable by the daemon user. Use your working mapping and slowdown values. Direct GPIO defaults to regular and 2, matching the original setup. New settings start at 20% brightness.
+3. The installer reuses the AFL email configuration or prompts for the contact address used with Squiggle. It switches off detected standalone AFL/UFC services so one process drives the panel, then enables the combined service at boot after checking the phone API and rendered frame. It backs up the installed app, service and settings under `/var/backups/ultimate-scoreboard/` and restores the previous service on startup failure. Stop any manually launched board or differently named display service before starting.
 4. On the same trusted Wi-Fi, open the address printed by the installer. If the hostname fails, use the printed Pi LAN address and port 8765. Anyone on that LAN can control the panel. Keep it local.
 
-For subsequent updates, run this from the Pi. Settings and favourites live outside the checkout.
+For subsequent updates, run this from the Pi. Settings and favourites live outside the checkout. If you made local troubleshooting edits, preserve them with `git stash push -u -m "Before scoreboard repair"` before pulling.
 
 ```bash
 cd ~/ultimate-scoreboard && git pull --ff-only && bash install.sh
@@ -30,7 +30,7 @@ Cricket follows Australian national sides and selected domestic competitions whe
 
 ## Preview and troubleshoot
 
-Run `python3 board.py` with Pillow installed to preview without GPIO, then open http://localhost:8765. For service diagnostics use `sudo journalctl -u ultimate-scoreboard -n 40 --no-pager`. If the panel is already occupied, check `systemctl list-units --type=service | grep -Ei 'score|matrix'`. To return to a previous setup run `sudo systemctl disable --now ultimate-scoreboard` then enable the standalone service you previously used, e.g. `sudo systemctl enable --now afl-led-scoreboard`.
+Run `python3 board.py` with Pillow installed (also python-dateutil on Python 3.7/3.8) to preview without GPIO, then open http://localhost:8765. For service diagnostics use `sudo journalctl -u ultimate-scoreboard -n 40 --no-pager`. If the panel is already occupied, check `systemctl list-units --type=service | grep -Ei 'score|matrix'`. To return to a previous setup run `sudo systemctl disable --now ultimate-scoreboard` then enable the standalone service you previously used, e.g. `sudo systemctl enable --now afl-led-scoreboard`.
 
 ## Team artwork
 
@@ -43,3 +43,17 @@ In Games, select a channel and source, then choose **Watch this game** to pin a 
 Settings offers a 0–120 second TV delay and a night brightness cap using the Pi's local clock. Equal start and end hours disable the cap. After changing channel, pin or delay the buffer fills again. Connection shows the Pi link separately from the last provider update. Provider coverage and pace determine when a score, finish method, down and distance, or base occupancy becomes available. NFL and MLB alternate available situation details with the clock or inning. Only the selected channel polls its feed.
 
 College Football follows ESPN’s NCAA Division I FBS slate, including unranked teams. Select Games → College Football → Feed to choose a matchup. The offline demo features Ohio State and Michigan. Live games use team logos from ESPN when available.
+
+## Compatibility and checks
+
+The Python 2 process only owns the original LED driver and accepts raw frames from the Python 3 app. It has no web server or feed code. A stalled driver exits so systemd can restart the board. The installer adds only private, checksum-verified timezone dependencies when needed; it does not upgrade Python, Pillow or the LED binding. Pillow before 8 uses a bitmap-font fallback for desktop HD previews; the physical 64x32 design is unchanged.
+
+Run `python3 selfcheck.py` for offline render checks. Automated tests:
+
+```bash
+PYTHONPATH=afl python3 -m unittest discover -s afl/tests
+PYTHONPATH=ufc-led-scoreboard python3 -m unittest discover -s ufc-led-scoreboard -p 'test*.py'
+PYTHONPATH=afl:ufc-led-scoreboard python3 -m unittest test_channels test_runtime
+```
+
+The runtime tests exercise the legacy pipe with a mock matrix, all phone demo channels, saved selection after restart and recovery from interrupted settings. Physical GPIO, live provider availability and boot on a particular Pi still require an on-device check.
