@@ -26,7 +26,7 @@ cd ~/ultimate-scoreboard && git pull --ff-only && bash install.sh
 
 AFL uses the existing Squiggle rotation and club logos. UFC uses the existing fight feed, introduction portraits and finish animations. Live fight names now occupy the full panel width. The final card shows the winner and method together. UFC Results cycles completed bouts from the latest completed card found in the past 28 days, including when the main feed has switched to the next event. METHOD PENDING means the provider has yet to supply the method. Decision types use DEC UD, DEC SD and DEC MD. The clock reflects provider updates.
 
-Cricket follows Australian national sides and selected domestic competitions when listed in ESPN's cricket header. NRL uses the NRL draw. NFL, MLB, NBA and Australian NBL use ESPN scoreboards. Two-team feeds rotate matches every ten seconds and refresh about once a minute. Provider coverage varies. OFFLINE marks a failed refresh and NO MATCH means the source returned no matching fixtures. Demo uses labelled sample scores. Manual accepts names, scores and status details from the phone, including overs or a bout result.
+Cricket follows Australian national sides and selected domestic competitions when listed in ESPN's cricket header. NRL uses the NRL draw. NFL, MLB, NBA and Australian NBL use ESPN scoreboards. Two-team feeds rotate matches every twenty seconds and refresh about once a minute. Provider coverage varies. OFFLINE marks a failed refresh and NO MATCH means the source returned no matching fixtures. Demo uses labelled sample scores. Manual accepts names, scores and status details from the phone, including overs or a bout result.
 
 ## Preview and troubleshoot
 
@@ -40,7 +40,7 @@ NFL, MLB, NBA, NBL, cricket and NRL show an emblem beside each side. AFL uses up
 
 In Games, select a channel and source, then choose **Watch this game** to pin a fixture or fight. Use the stars to prioritise your teams on that channel. Now showing mirrors the physical panel, including TV delay. Unpin to resume rotation. Pins, favourites, night hours and delay survive a reboot. Once a pinned frame has appeared it is saved for recovery, including the final result. Selecting a different channel or source releases the pin.
 
-Settings offers a 0–120 second TV delay and a night brightness cap using the Pi's local clock. Equal start and end hours disable the cap. After changing channel, pin or delay the buffer fills again. Connection shows the Pi link separately from the last provider update. Provider coverage and pace determine when a score, finish method, down and distance, or base occupancy becomes available. NFL and MLB alternate available situation details with the clock or inning. Only the selected channel polls its feed.
+Settings offers a 0–120 second TV delay and a night brightness cap using the Pi's local clock. Equal start and end hours disable the cap. After changing channel, pin or delay the buffer fills again. Connection shows the Pi link separately from the last provider update. Provider coverage and pace determine when a score, finish method, down and distance, or base occupancy becomes available. Sport-specific details rotate every four seconds while team logos and scores stay in place. Only the selected channel polls its feed.
 
 College Football follows ESPN’s NCAA Division I FBS slate, including unranked teams. Select Games → College Football → Feed to choose a matchup. The offline demo features Ohio State and Michigan. Live games use team logos from ESPN when available.
 
@@ -57,3 +57,18 @@ PYTHONPATH=afl:ufc-led-scoreboard python3 -m unittest test_channels test_runtime
 ```
 
 The runtime tests exercise the legacy pipe with a mock matrix, all phone demo channels, saved selection after restart and recovery from interrupted settings. Physical GPIO, live provider availability and boot on a particular Pi still require an on-device check.
+
+## Clear panel layout
+
+AFL keeps its original layout. Other team sports use two separate team rows: a real crest, team abbreviation and large score, followed by one native-pixel status line. Logos are cropped using transparency and given a subdued edge for visibility on black. Scores and crests stay fixed while information pages rotate; text is never horizontally squeezed to fit. A score too long for its cell shows `--`; the phone retains its full value.
+
+| Sport | Panel information when supplied by the feed |
+| --- | --- |
+| NFL / college football | Quarter, clock, possession marker, down and distance, field position, timeouts |
+| MLB | Inning/half, balls-strikes count, outs, occupied-base diamonds |
+| NBA / NBL | Quarter, clock, shot clock, team fouls, timeouts |
+| Cricket | Runs/wickets, batting-side marker, overs, target, match summary/result |
+| NRL | Score, match state, provider clock when present |
+| UFC | Fighter names, round/time; final winner and method stay visible while finish time/judge cards rotate in the header |
+
+This is a compact broadcast-style presentation, not a TV data subscription. Missing fields are omitted; the app does not invent a running clock or guess possession. ESPN often omits shot clocks, fouls or timeouts, and NRL can reject requests (HTTP 403). The phone retains longer summaries. Demo data is explicitly labelled and does not indicate a live match.

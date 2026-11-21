@@ -136,23 +136,32 @@ def put_mark(frame,x=0):
     frame.paste(mark,(x,0),mark)
 
 
-def fight_frame(bout, tick, offline):
+def fight_frame(bout, tick, offline, demo=False):
+    from ledlayout import text, large, pages
     image = Image.new("RGB", (64, 32))
-    draw = ImageDraw.Draw(image)
+    mark=promotion_mark().copy()
+    mark.thumbnail((10,5),RESAMPLE.LANCZOS)
+    image.paste(mark,(0,0),mark)
+    label='OFF' if offline else 'DEMO' if demo else ''
+    header_right=47 if label else 64
+    if label: text(image,label,(48,0,64,5),'#ffb944')
     if bout.state == "post":
         winner = next((n for n, won in zip(bout.names, bout.winner) if won), "")
-        pixels(draw, 20, 1, "WINNER" if winner else "FINAL", "#ffb944", 64)
-        big_line(image, winner or "RESULT PENDING", 8, "#63ff84")
-        big_line(image, short_method(bout.method) or "METHOD PENDING", 21, "#ffffff")
+        headings=['WINNER' if winner else 'FINAL']
+        if bout.timing: headings.append(bout.timing)
+        headings.extend(bout.cards)
+        heading=headings[int(tick)%len(headings)]
+        heading=pages(heading,(header_right-12+1)//4)[0]
+        text(image,heading,(12,0,header_right,5),'#ffb944')
+        large(image,winner or 'RESULT PENDING',(0,8,64,18),'#63ff84',tick)
+        large(image,short_method(bout.method) or 'METHOD PENDING',(0,21,64,31),'white',tick)
     else:
-        pixels(draw, 20, 1, ("OFF " if offline else "") + (bout.timing or bout.detail), "#ffb944", 64)
-        big_line(image, bout.names[0], 9, "#ff7777")
-        big_line(image, bout.names[1], 21, "#8abaff")
-    put_mark(image)
-    if offline and bout.state == "post":
-        draw.point((63,0), fill="orange")
+        heading=bout.timing or bout.detail
+        capacity=(header_right-12+1)//4
+        text(image,pages(heading,capacity)[int(tick)%len(pages(heading,capacity))],(12,0,header_right,5),'#ffb944')
+        large(image,bout.names[0],(0,8,64,18),'#ff7777',tick)
+        large(image,bout.names[1],(0,21,64,31),'#8abaff',tick)
     return image
-
 
 def celebration(bout):
     label = bout.method.upper()
@@ -178,13 +187,8 @@ def celebration(bout):
 
 
 def render(bout, offline=False, demo=False, tick=0):
-    if bout and bout.state in ("in", "post"):
-        frame = fight_frame(bout, tick, offline)
-        if demo:
-            pen = ImageDraw.Draw(frame)
-            pen.rectangle((46,0,63,5),fill="black")
-            pixels(pen, 48, 1, "DEMO", "#ffb944", 64)
-        return frame
+    if bout and bout.state in ("pre", "in", "post"):
+        return fight_frame(bout, tick, offline, demo)
     image = Image.new("RGB", (64, 32))
     draw = ImageDraw.Draw(image)
     title = "DEMO" if demo else (bout.card if bout else "UFC")
@@ -202,7 +206,7 @@ def render(bout, offline=False, demo=False, tick=0):
     return image
 
 
-def intro(bout, corner, demo=False):
+def intro(bout, corner, demo=False, tick=0):
     portrait = photo(bout.athlete_ids[corner])
     if portrait is None:
         return render(bout, demo=demo)
@@ -214,9 +218,11 @@ def intro(bout, corner, demo=False):
     put_mark(image,32)
     if demo:
         pixels(draw, 48, 1, "DEMO", color, 64)
-    name = bout.names[corner]
-    pixels(draw, 32, 11, name[:8], "white", 64)
-    pixels(draw, 32, 18, name[8:16], "white", 64)
+    from ledlayout import pages, text
+    chunks=pages(bout.names[corner],8)
+    start=(int(tick) % max(1,(len(chunks)+1)//2))*2
+    for line,name in enumerate(chunks[start:start+2]):
+        text(image,name,(32,10+line*7,64,15+line*7),'white')
     pixels(draw, 32, 26, "ON CARD" if not demo else "INTRO", "#65e3da", 64)
     return image
 
@@ -337,7 +343,7 @@ def main():
                     display(frame)
                     time.sleep(.12)
                 played.add(bout.key)
-            frame = render(bout, offline, args.demo, index // max(1, len(screens))) if corner is None else intro(bout, corner, args.demo)
+            frame = render(bout, offline, args.demo, index // max(1, len(screens))) if corner is None else intro(bout, corner, args.demo, index // max(1,len(screens)))
             display(frame)
             if args.once:
                 return

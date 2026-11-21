@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.request import urlopen
 from urllib.parse import urlsplit
-from PIL import Image
+from PIL import Image, ImageFilter, ImageChops
 
 RESAMPLE = getattr(Image, "Resampling", Image)
 
@@ -44,9 +44,22 @@ def scaled(source, w, h):
             if im.width*im.height > 4000000:
                 return None
             mark = im.convert("RGBA")
-        mark = mark.crop(mark.getbbox())
-        mark.thumbnail((w,h), RESAMPLE.LANCZOS)
-        return mark
+        bounds = mark.getchannel("A").getbbox()
+        if not bounds:
+            return None
+        mark = mark.crop(bounds)
+        # Reserve an edge pixel so dark crests stay visible on a black panel.
+        mark.thumbnail((max(1,w-2),max(1,h-2)), RESAMPLE.LANCZOS)
+        alpha=mark.getchannel("A").point(lambda value: 0 if value<24 else 255 if value>180 else value)
+        mark.putalpha(alpha)
+        output=Image.new("RGBA",(mark.width+2,mark.height+2))
+        output.paste(mark,(1,1))
+        mask=output.getchannel("A")
+        edge=ImageChops.subtract(mask.filter(ImageFilter.MaxFilter(3)),mask)
+        halo=Image.new("RGBA",output.size,"#a6b9c8")
+        halo.putalpha(edge.point(lambda value:value//2))
+        halo.alpha_composite(output)
+        return halo
     except (OSError,ValueError):
         return None
 

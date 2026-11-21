@@ -144,6 +144,22 @@ def empty_guide():
     return dict(games=[],showing="",checked=0,health="Connecting")
 
 
+def status_overlay(frame, sport, label):
+    # Keep scores and UFC victory method unobstructed during a feed outage.
+    overlay=frame.copy()
+    pen=ImageDraw.Draw(overlay)
+    if sport.startswith('UFC'):
+        pen.rectangle((48,0,63,5),fill='black')
+        pixels(pen,48,1,'OFF' if label=='OFFLINE' else label,'#ffbf50',64)
+    elif sport=='AFL':
+        pen.rectangle((0,0,31,6),fill='black')
+        pixels(pen,0,1,label,'#ffbf50',32)
+    else:
+        pen.rectangle((0,27,63,31),fill='black')
+        pixels(pen,0,28,label,'#ffbf50',64)
+    return overlay
+
+
 def display(matrix):
     global preview,status,listing,actual_brightness,display_key,frame_ready
     tmp = tempfile.TemporaryDirectory()
@@ -256,9 +272,7 @@ def display(matrix):
                         last_visible=data
                 if (meta["health"]=="Offline" or (pin and not meta["showing"])) and (ready is not None or last_visible):
                     overlay = ready.copy() if ready is not None else Image.open(BytesIO(last_visible)).convert("RGB")
-                    pen = ImageDraw.Draw(overlay)
-                    pen.rectangle((0,0,31,5),fill="black")
-                    pixels(pen,0,1,"OFFLINE" if meta["health"]=="Offline" else "HELD","#ffbf50",32)
+                    overlay=status_overlay(overlay,sport,"OFFLINE" if meta["health"]=="Offline" else "HELD")
                     if matrix:
                         matrix.SetImage(overlay)
                     with lock:
