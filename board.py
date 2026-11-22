@@ -113,7 +113,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def worker(s, target):
     sport = s["sport"]
-    env = dict(os.environ, BOARD_FRAME=str(target),BOARD_PIN=s["pin"],BOARD_GUIDE=str(target.with_name("guide.json")))
+    env = dict(os.environ, BOARD_FRAME=str(target),BOARD_PIN=s["pin"],BOARD_GUIDE=str(target.with_name("guide.json")),BOARD_PORTRAITS=str(statefile.parent/"ufc-portraits"))
     if sport == "AFL":
         cmd = [ROOT/"afl/afl_scoreboard.py","--cache-dir",statefile.parent/"afl-cache"]
     elif sport.startswith("UFC"):

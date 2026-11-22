@@ -72,3 +72,7 @@ AFL keeps its original layout. Other team sports use two separate team rows: a r
 | UFC | Fighter names, round/time; final winner and method stay visible while finish time/judge cards rotate in the header |
 
 This is a compact broadcast-style presentation, not a TV data subscription. Missing fields are omitted; the app does not invent a running clock or guess possession. ESPN often omits shot clocks, fouls or timeouts, and NRL can reject requests (HTTP 403). The phone retains longer summaries. Demo data is explicitly labelled and does not indicate a live match.
+
+### UFC fighter portraits
+
+Live bouts show both real fighter photos, corner-coloured names, round and clock. Completed bouts with a known winner show a larger winner portrait, winner name and finish method. SUB means submission, DQ disqualification, and NC no contest; the phone keeps the full method. Finish timing and available judge cards rotate in the header. Names paginate at native pixel size rather than being squeezed. Missing photos use a name fallback. ESPN headshots load in the background so a slow image request cannot stall the score display. Successful portraits are saved under the scoreboard data directory and reused after reboot, including offline. Failed downloads retry after five minutes; demo portraits work offline.

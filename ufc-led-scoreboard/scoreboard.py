@@ -79,7 +79,7 @@ def bouts(payload):
                 timing += " " + status["displayClock"]
             result.append(Bout(event.get("shortName") or "UFC", tuple(names), state, detail,
                                tuple(c.get("winner") is True for c in pair),
-                               tuple(str(c.get("id") or c.get("athlete", {}).get("id") or "") for c in pair),
+                               tuple(str(c.get("athlete", {}).get("id") or c.get("id") or "") for c in pair),
                                (str(event.get("id", "")), str(fight.get("id", ""))),
                                method_label(status.get("result")) or method_label(fight.get("result")) or method_label(fight.get("method")), cards, timing))
     return result
@@ -136,8 +136,67 @@ def put_mark(frame,x=0):
     frame.paste(mark,(x,0),mark)
 
 
+def portrait_frame(bout, tick, offline, demo):
+    """Actual fighter portraits remain visible on live and result cards."""
+    from ledlayout import text, large, pages
+    faces=[photo(athlete_id) for athlete_id in bout.athlete_ids]
+    if not any(face is not None for face in faces):
+        return None
+    image=Image.new('RGB',(64,32))
+    pen=ImageDraw.Draw(image)
+    mark=promotion_mark().copy()
+    mark.thumbnail((10,5),RESAMPLE.LANCZOS)
+    image.paste(mark,(0,0),mark)
+    label='OFF' if offline else 'DEMO' if demo else ''
+    right=47 if label else 64
+    if label: text(image,label,(48,0,64,5),'#ffb944')
+    winner=next((i for i,won in enumerate(bout.winner) if won),None)
+    if bout.state=='post' and winner is not None:
+        headings=['WINNER']+([bout.timing] if bout.timing else [])+list(bout.cards)
+        heading=headings[int(tick)%len(headings)]
+        text(image,pages(heading,(right-11)//4)[0],(12,0,right,5),'#ffb944')
+        face=faces[winner]
+        if face is not None:
+            face=face.resize((26,26),RESAMPLE.LANCZOS)
+            image.paste(face,(0,6),face)
+        else:
+            text(image,'WIN',(0,6,26,32),'#63ff84')
+        large(image,bout.names[winner],(28,7,64,17),'#63ff84',tick)
+        method=short_method(bout.method)
+        method={'SUBMISSION':'SUB','DISQUALIFICATION':'DQ','NO CONTEST':'NC','DOCTOR STOPPAGE':'TKO'}.get(method,method)
+        large(image,method or 'PENDING',(28,21,64,31),'white',tick)
+    else:
+        text(image,'FINAL' if bout.state=='post' else 'LIVE' if bout.state=='in' else 'NEXT',
+             (12,0,right,5),'#ffb944')
+        for i,(name,face,color) in enumerate(zip(bout.names,faces,('#ff7777','#8abaff'))):
+            x=0 if i==0 else 43
+            if face is not None:
+                face=face.resize((21,21),RESAMPLE.LANCZOS)
+                image.paste(face,(x,6),face)
+            else:
+                pen.rectangle((x+1,7,x+19,25),outline=color)
+                text(image,name[:2],(x,7,x+21,25),color)
+            names=pages(name,8)
+            text(image,names[int(tick)%len(names)],(i*32,27,i*32+32,32),color)
+        timing=(bout.timing or bout.detail).split()
+        if bout.state=='post':
+            center=short_method(bout.method) or 'FINAL'
+            center={'SUBMISSION':'SUB','DISQUALIFICATION':'DQ','NO CONTEST':'NC'}.get(center,center)
+            lines=pages(center,5)
+            text(image,lines[int(tick)%len(lines)],(22,12,42,17),'white')
+        else:
+            round_label=next((word for word in timing if word.startswith('R') and word[1:].isdigit()),'VS')
+            clock=next((word for word in timing if ':' in word),'')
+            text(image,round_label[:5],(22,8,42,13),'#ffb944')
+            if clock: text(image,clock[:5],(22,18,42,23),'white')
+    return image
+
+
 def fight_frame(bout, tick, offline, demo=False):
     from ledlayout import text, large, pages
+    portrait=portrait_frame(bout,tick,offline,demo)
+    if portrait is not None:
+        return portrait
     image = Image.new("RGB", (64, 32))
     mark=promotion_mark().copy()
     mark.thumbnail((10,5),RESAMPLE.LANCZOS)
@@ -164,25 +223,15 @@ def fight_frame(bout, tick, offline, demo=False):
     return image
 
 def celebration(bout):
-    label = bout.method.upper()
-    image = fight_frame(bout, 0, False)
+    # Animate only a spare bottom-edge strip: keep the face and result readable.
+    label=bout.method.upper()
+    image=fight_frame(bout,0,False)
+    color=('#ff6030' if 'KO' in label or 'KNOCKOUT' in label else
+           '#ac71ff' if 'SUB' in label else '#ffcb55' if 'DEC' in label else '#62ffa3')
     for step in range(14):
-        frame = image.copy()
-        draw = ImageDraw.Draw(frame)
-        draw.rectangle((0, 24, 63, 31), fill="black")
-        progress = min(step, 8)
-        if "KO" in label or "KNOCKOUT" in label:
-            for x in (31-progress*3, 32+progress*3):
-                draw.line((31, 24, x, 31), fill="#ff6030")
-        elif "SUB" in label:
-            draw.rectangle((progress*3, 24, 63-progress*3, 31), outline="#ac71ff")
-        elif "DEC" in label or label in ("UD", "SD", "MD"):
-            for x in range(0, min(3, 1+step//3)*22, 22):
-                draw.line((x, 31, x+17, 31), fill="#ffcb55")
-        else:
-            draw.line((0, 31, min(63, step*6), 31), fill="#62ffa3")
-        offset = min(max(0, len(label)-16), max(0, step-4)*2)
-        pixels(draw, 0, 25, label[offset:], "white", 64)
+        frame=image.copy()
+        draw=ImageDraw.Draw(frame)
+        draw.line((28,31,min(63,28+step*3),31),fill=color)
         yield frame
 
 
