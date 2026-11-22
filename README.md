@@ -76,3 +76,11 @@ This is a compact broadcast-style presentation, not a TV data subscription. Miss
 ### UFC fighter portraits
 
 Live bouts show both real fighter photos, corner-coloured names, round and clock. Completed bouts with a known winner show a larger winner portrait, winner name and finish method. SUB means submission, DQ disqualification, and NC no contest; the phone keeps the full method. Finish timing and available judge cards rotate in the header. Names paginate at native pixel size rather than being squeezed. Missing photos use a name fallback. ESPN headshots load in the background so a slow image request cannot stall the score display. Successful portraits are saved under the scoreboard data directory and reused after reboot, including offline. Failed downloads retry after five minutes; demo portraits work offline.
+
+## Formula 1
+
+Select **F1** in the phone remote, then Feed or Demo. The LED leaderboard shows three drivers at a time and cycles through the field. Choose **Watch driver** to hold one driver, with name, position, constructor and available timing details. The F1 logo is bundled for offline use; constructor identity is shown with its supplied name and team colour.
+
+The channel polls ESPN's F1 scoreboard every 30 seconds, selects a live session first, otherwise the latest completed session or an upcoming session. Practice, qualifying, sprint and race sessions are supported. Only race/sprint periods are shown as lap counts. Upcoming entry-list order is never presented as grid position. Background requests fetch constructor and timing metadata for visible drivers; missing gaps, tyre data and other unavailable telemetry are not guessed. This is a public scoreboard feed, not an official real-time timing subscription. Driver metadata refreshes at most every two minutes. All demo timings are illustrative.
+
+F1 uses the same brightness, TV delay, offline status and saved selection controls as other channels. The manual mode remains a generic manually entered score card. ESPN artwork is used for the F1 logo.

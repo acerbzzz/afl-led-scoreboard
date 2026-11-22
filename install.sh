@@ -94,7 +94,7 @@ rollback() {
 trap rollback ERR
 for old in "${active[@]}"; do sudo systemctl stop "$old"; done
 sudo install -d /opt/ultimate-scoreboard/dependencies
-sudo cp -r gameguide.py ledlayout.py badges badgeart.py afl ufc-led-scoreboard board.py matrix_driver.py matrix_bridge.py sports.py phone.html /opt/ultimate-scoreboard/
+sudo cp -r gameguide.py ledlayout.py badges badgeart.py afl ufc-led-scoreboard board.py f1.py matrix_driver.py matrix_bridge.py sports.py phone.html /opt/ultimate-scoreboard/
 sudo cp -r "$deps/." /opt/ultimate-scoreboard/dependencies/
 sudo chmod -R a+rX /opt/ultimate-scoreboard
 sudo install -d -o daemon -g daemon -m 0750 /var/lib/ultimate-scoreboard

@@ -11,6 +11,8 @@ frames = [draw_game(demo_game())]
 frames += [draw(sport, values) for sport, values in EXAMPLES.items()]
 frames += [draw('AFL', ('LOADING', '', '', '', 'AFL'))]
 frames += [render(fight) for fight in DEMO]
+from f1 import draw as draw_f1, DEMO as F1_DEMO
+frames += [draw_f1(F1_DEMO,flag="DEMO"), draw_f1(F1_DEMO,flag="DEMO",driver=F1_DEMO["drivers"][0])]
 for frame in frames:
     assert frame.size == (64, 32) and frame.mode == 'RGB'
     assert frame.getbbox(), 'Empty display frame'

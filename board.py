@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, str(ROOT / "afl"))
 from matrix_driver import make_matrix
 
-CHANNELS = ["AFL", "UFC", "UFC Results", *URLS]
+CHANNELS = ["AFL", "UFC", "UFC Results", *URLS, "F1"]
 DEFAULT = dict(sport="AFL", mode="Demo", brightness=20, names=["HOME","AWAY"],
                scores=["0","0"], phase="LIVE",pin="", favourites=[],delay=0,night=False,
                nightStart=22,nightEnd=7,nightBrightness=12)
@@ -116,6 +116,8 @@ def worker(s, target):
     env = dict(os.environ, BOARD_FRAME=str(target),BOARD_PIN=s["pin"],BOARD_GUIDE=str(target.with_name("guide.json")),BOARD_PORTRAITS=str(statefile.parent/"ufc-portraits"))
     if sport == "AFL":
         cmd = [ROOT/"afl/afl_scoreboard.py","--cache-dir",statefile.parent/"afl-cache"]
+    elif sport == "F1":
+        cmd = [ROOT/"f1.py"]
     elif sport.startswith("UFC"):
         cmd = [ROOT/"ufc-led-scoreboard/scoreboard.py"]
         env["UFC_RESULTS_ONLY"] = str(int(sport == "UFC Results"))
